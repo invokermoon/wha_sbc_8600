@@ -38,20 +38,36 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <sys/types.h>
 #include <unistd.h>
 #include <signal.h>
-enum data_type {
-    TYPE_HB = 100,
-    TYPE_DATA=101,
-};
 
-struct sb_data{
-    enum data_type data_type;
-    char data[100];
-};
+/*color for print*/
+#define NONE         "\033[m"
+#define RED          "\033[0;32;31m"
+#define LIGHT_RED    "\033[1;31m"
+#define GREEN        "\033[0;32;32m"
+#define LIGHT_GREEN  "\033[1;32m"
+#define BLUE         "\033[0;32;34m"
+#define LIGHT_BLUE   "\033[1;34m"
+#define DARY_GRAY    "\033[1;30m"
+#define CYAN         "\033[0;36m"
+#define LIGHT_CYAN   "\033[1;36m"
+#define PURPLE       "\033[0;35m"
+#define LIGHT_PURPLE "\033[1;35m"
+#define BROWN        "\033[0;33m"
+#define YELLOW       "\033[1;33m"
+#define LIGHT_GRAY   "\033[0;37m"
+#define WHITE        "\033[1;37m"
+#define sbc_print(fmt,...) do {  printf(GREEN"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
+#define sbc_color_print(color,fmt,...) do {  printf(GREEN"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
 
+/*Msg header sent to server*/
+#define DEVICE_MSG_HEAD		"01"
+#define DEVICE_HB_HEAD		"88"
+/*msg header recved*/
+#define SEVER_MSG_HEAD		"61"
 
 
 typedef void (*sighandler_t)(int);
-#define BUFLEN sizeof(struct sb_data)
+#define BUFLEN 200
 int sockfd, newfd;
 void sig_pipe(int signo);
 
@@ -64,6 +80,36 @@ void sig_pipe(int signo)
 	close(newfd);
     }
     exit(-1);
+}
+
+char *make_msg(char *header,char *roomid,char *status)
+{
+    char *msg=malloc(BUFLEN);
+    char slen[5];
+    int i=0;
+    unsigned int len=6+strlen(roomid)+strlen(status)+strlen("|")*2;
+    memset(msg,0,BUFLEN);
+    if(header==NULL||roomid==NULL||status==NULL){
+	sbc_print("parameters is error\n");
+	sleep(2);
+	return NULL;
+    }
+    memcpy(msg,header,strlen(header));
+    sprintf(slen,"%4d|",len);
+    for(i=0;i<4;i++){
+	char *p=strstr(slen," ");
+	if(p!=NULL){
+	    memcpy(p,"0",1);
+	}
+    }
+
+    strcat(msg,slen);
+    strcat(msg,roomid);
+    strcat(msg,"|");
+    strcat(msg,status);
+    sbc_print("Complete msg=%s,len=%d\n",msg,len);
+    sleep(5);
+    return msg;
 }
 
 int main(int argc, char **argv)
@@ -87,7 +133,7 @@ int main(int argc, char **argv)
     }
 
 
-    /*设置服务器端口*/    
+    /*设置服务器端口*/
     if(argv[2])
         port = atoi(argv[2]);
     else
@@ -126,46 +172,13 @@ int main(int argc, char **argv)
         }else
             printf("正在与您聊天的客户端是：%s: %d\n",inet_ntoa(c_addr.sin_addr),ntohs(c_addr.sin_port));
         while(1){
-#if 0
-        _retry:
-            /******发送消息*******/
-            bzero(buf,BUFLEN);
-            printf("请输入发送给对方的消息：");
-            /*fgets函数：从流中读取BUFLEN-1个字符*/
-            fgets(buf,BUFLEN,stdin);
-            /*打印发送的消息*/
-            //fputs(buf,stdout);
-            if(!strncasecmp(buf,"quit",4)){
-                printf("server 请求终止聊天!\n");
-                break;
-            }
-            /*如果输入的字符串只有"\n"，即回车，那么请重新输入*/
-            if(!strncmp(buf,"\n",1)){
-                printf("输入的字符只有回车，这个是不正确的！！！\n");
-                goto _retry;
-            }
-            /*如果buf中含有'\n'，那么要用strlen(buf)-1，去掉'\n'*/
-            if(strchr(buf,'\n'))
-                len = send(newfd,buf,strlen(buf)-1,0);
-            /*如果buf中没有'\n'，则用buf的真正长度strlen(buf)*/
-            else
-                len = send(newfd,buf,strlen(buf),0);
-            if(len > 0)
-                printf("消息发送成功，本次共发送的字节数是：%d\n",len);
-            else{
-                printf("消息发送失败!\n");
-                break;
-            }
-#endif
             /******接收消息*******/
             bzero(buf,BUFLEN);
             len = recv(newfd,buf,BUFLEN,0);
             if(len > 0){
-		struct sb_data *data=(struct sb_data*)buf;
-		if(data->data_type==TYPE_HB)
-		    printf("HB：%s,共有字节数是: %d\n",data->data,len);
-		else
-		    printf("客户端发来的信息是：%s,共有字节数是: %d\n",data->data,len);
+		    printf("\n客户端发来的信息是：%s,共有字节数是: %d\n",buf,len);
+		    char *msg = (char *)make_msg(SEVER_MSG_HEAD,"8888","01");
+		    send(newfd,msg,strlen(msg),0);
 	    }
             else{
                 if(len < 0 )
