@@ -14,6 +14,7 @@ $(info server_src_dir=$(server_src_dir))
 
 common_src:= $(client_src_dir)/cJSON.c
 client_src:= $(client_src_dir)/client.c
+client_src+= $(client_src_dir)/client_handle.c
 client_src+= $(common_src)
 
 server_src:= $(server_src_dir)/server.c

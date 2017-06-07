@@ -59,11 +59,46 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #define sbc_print(fmt,...) do {  printf(GREEN"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
 #define sbc_color_print(color,fmt,...) do {  printf(GREEN"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
 
-/*Msg header sent to server*/
-#define DEVICE_MSG_HEAD		"01"
-#define DEVICE_HB_HEAD		"88"
-/*msg header recved*/
-#define SEVER_MSG_HEAD		"61"
+/*
+ * interface type:clinet --->server
+ * */
+#define ITYPE_COMMITINFO 	"01"
+#define ITYPE_SCAN		"02"
+#define ITYPE_PAIR_OK		"03"
+#define ITYPE_HEARTBEAT		"88"
+
+/*interface type:server-->client*/
+#define ITYPE_SETSTATUS	"61"
+
+/*Mac*/
+#define MAC_ADDRESS	"11:22:33:44:55:66"
+
+#define MSG_ID		"10000001|"
+#define VERSION		"01|"
+#define DEVICE		"ABCDEFGHIJKL|"
+/*Rsp status*/
+#define STATUS_OK 		"00"
+#define STATUS_FORMAT_FAIL	"71"
+#define STATUS_MSG_INCOMPLETE	"72"
+#define STATUS_INSIDE_ERROR	"73"
+
+
+
+/*Common msg header*/
+typedef struct msg_header{
+    char id[8+1];
+    char itype[2+1];
+    char length[4+1];
+    char version[2+1];
+    char own[10+1];
+    char device[12+1];
+    char data[0];
+}msg_header_t;
+/*Common msg rsp*/
+typedef struct msg_rsp_s{
+    char status[2+1];
+    char error[5];
+}msg_rsp_t;
 
 
 typedef void (*sighandler_t)(int);
@@ -110,6 +145,43 @@ char *make_msg(char *header,char *roomid,char *status)
     sbc_print("Complete msg=%s,len=%d\n",msg,len);
     sleep(5);
     return msg;
+}
+
+char *sending_status_error(void *buf,char *status,char *error)
+{
+    unsigned int buf_len=strlen(buf);
+    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t);
+    msg_header_t *header=(msg_header_t*)buf;
+    /*chanege the length*/
+    {
+	char slen[5];
+	int i=0;
+	unsigned src_len=atoi(header->length);
+	sbc_print("src_len is %d\n",src_len);
+	src_len+=sizeof(msg_header_t);
+	sprintf(slen,"%4d|",len);
+	for(i=0;i<4;i++){
+	    char *p=strstr(slen," ");
+	    if(p!=NULL){
+		memcpy(p,"0",1);
+	    }
+	}
+	memcpy(header->length,slen,sizeof(header->length));
+    }
+
+    char *buff=malloc(len+2);
+    memset(buff,0,len+2);
+    if(buf==NULL){
+	sbc_print("buf is NULL,error\n");
+	return 0;
+    }
+    memcpy(buff,buf,strlen(buf));
+    strcat(buff,"|");
+    strcat(buff,status);
+    strcat(buff,"|");
+    strcat(buff,error);
+    sbc_print("rsp msg is: \n%s\n",buff);
+    return buff;
 }
 
 int main(int argc, char **argv)
@@ -177,8 +249,9 @@ int main(int argc, char **argv)
             len = recv(newfd,buf,BUFLEN,0);
             if(len > 0){
 		    printf("\n客户端发来的信息是：\n%s,共有字节数是: %d\n",buf,len);
-		    //char *msg = (char *)make_msg(SEVER_MSG_HEAD,"8888","01");
-		    //send(newfd,msg,strlen(msg),0);
+		    char *msg = sending_status_error(buf,STATUS_OK,"error");
+		    send(newfd,msg,strlen(msg),0);
+		    free(msg);
 	    }
             else{
                 if(len < 0 )

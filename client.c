@@ -99,7 +99,17 @@ int sockfd;
 /*Mac*/
 #define MAC_ADDRESS	"11:22:33:44:55:66"
 
+#define MSG_ID		"10000001|"
+#define VERSION		"01|"
+#define DEVICE		"ABCDEFGHIJKL|"
+/*Rsp status*/
+#define STATUS_OK 		"00"
+#define STATUS_FORMAT_FAIL	"71"
+#define STATUS_MSG_INCOMPLETE	"72"
+#define STATUS_INSIDE_ERROR	"73"
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
 
 void sig_pipe(int signo);
 
@@ -113,14 +123,7 @@ void sig_pipe(int signo)
     exit(-1);
 }
 
-#if 1
-typedef struct sbc_rsp_msg{
-    char header[3];
-    char length[5];
-    char roomid[5];
-    char status[3];
-}sbc_rsp_msg_t;
-#endif
+/*Common msg header*/
 typedef struct msg_header{
     char id[8+1];
     char itype[2+1];
@@ -130,6 +133,11 @@ typedef struct msg_header{
     char device[12+1];
     char data[0];
 }msg_header_t;
+/*Common msg rsp*/
+typedef struct msg_rsp_s{
+    char status[2+1];
+    char error[5];
+}msg_rsp_t;
 
 /*Msg struct :client to server*/
 typedef struct commit_msg_s{
@@ -141,11 +149,11 @@ typedef struct hb_msg_s{
 }hb_msg_t;
 
 typedef struct scan_msg_s{
-    char gwMac[1];
-    char version[1];
-    char cmdtype[1];
-    char bleMac[1];
-    char phonemac[1];
+    char gwMac[1+1];
+    char version[1+1];
+    char cmdType[1+1];
+    char bleMac[1+1];
+    char phoneMac[1+1];
     char timestamp[1];
 }scan_msg_t;
 
@@ -158,36 +166,26 @@ typedef struct pair_msg_s{
 }pair_msg_t;
 
 /*Msg struct :server to client*/
-typedef struct status_setting{
-    char roomid[1];
+typedef struct device_status_s{
+    char roomid[1+1];
     char status[1];
-}status_setting_t;
+}device_status_t;
 
-char *make_send_msg(char *itype,void *data)
+
+char *make_send_msg(char *itype,void *data, unsigned int data_len)
 {
     pthread_mutex_lock(&mutex);
     char slen[5];
-    char iitype[3]="  |";
+    char iitype[4]={0};
     int i=0;
-    unsigned int data_len =0;
-
-    if(data!=NULL){
-	if(strncmp(itype,ITYPE_COMMITINFO,2)==0){
-	    data_len=sizeof(struct commit_msg_s);
-	}else if(strncmp(itype,ITYPE_SCAN,2)==0){
-	    data_len=sizeof(struct scan_msg_s);
-	}else if(strncmp(itype,ITYPE_PAIR_OK,2)==0){
-	    data_len=sizeof(struct pair_msg_s);
-	}else if(strncmp(itype,ITYPE_HEARTBEAT,2)==0){
-	    data_len=sizeof(struct hb_msg_s);
-	}else{
-	    sbc_print("Please input right cmd type\n");
-	}
+    if(data==NULL||data==0){
+	sbc_print("data is null,make msg fail\n");
+	return NULL;
     }
 
     unsigned len = data_len + sizeof(struct msg_header);
-    msg_header_t *header=malloc(len+5);
-    memset(header,0,len+5);
+    msg_header_t *header=malloc(len+1);
+    memset(header,0,len+1);
 
     memcpy(iitype,itype,2);
     memcpy(iitype+2,"|",1);
@@ -201,110 +199,131 @@ char *make_send_msg(char *itype,void *data)
 	}
     }
 
-    memcpy(header->id,"10000001|",sizeof(header->id));
+    memcpy(header->id,MSG_ID,sizeof(header->id));
     memcpy(header->itype,iitype,sizeof(header->itype));
-    memcpy(header->version,"01|",sizeof(header->version));
+    memcpy(header->version,VERSION,sizeof(header->version));
     memcpy(header->own,"1111111111|",sizeof(header->own));
-    memcpy(header->device,"ABCDEFGHIJKL|",sizeof(header->device));
+    memcpy(header->device,DEVICE,sizeof(header->device));
     memcpy(header->length,slen,sizeof(header->length));
 
     /*cpy data*/
-    if(data!=NULL){
+    if((data!=NULL)&&(data_len!=0)){
 	memcpy(header->data,(char*)data,data_len);
     }
-    sbc_print("Complete msg=%s,len=%d\n",(char *)header,len);
+    sbc_print("Complete msg:\n%s\nlen=%d\n",(char *)header,len);
     pthread_mutex_unlock(&mutex);
     return (char*)header;
 }
 
-
-#if 0
-char *make_send_msg(char *header,char *mac,char *data)
+int process_device_status(device_status_t *data)
 {
-    char *msg=malloc(BUFLEN);
-    char bmac[18];
-    char slen[5];
-    int i=0;
-    unsigned int len=strlen(header)+sizeof(slen)+sizeof(bmac);
-    memset(msg,0,100);
-    if(header==NULL){
-	sbc_print("header is error\n");
-	return NULL;
-    }
-    memcpy(msg,header,strlen(header));
-    if(NULL==mac){
-	memcpy(bmac,MAC_ADDRESS,18);
-    }else
-	memcpy(bmac,mac,strlen(mac));
-    if(data==NULL)
-	len=strlen(header)+sizeof(slen)+strlen(bmac);
-    else{
-	if(strlen(data)>(BUFLEN-50)){
-	    sbc_print("data size if too large:%zd\n",strlen(data));
-	    return NULL;
-	}
-	len=strlen(header)+sizeof(slen)+strlen(bmac)+strlen(data)+strlen("|");
-    }
-    sprintf(slen,"%4d|",len);
-    for(i=0;i<4;i++){
-	char *p=strstr(slen," ");
-	if(p!=NULL){
-	    memcpy(p,"0",1);
-	}
-    }
+    return 0;
 
-    strcat(msg,slen);
-    strcat(msg,bmac);
-    if(data!=NULL){
-	strcat(msg,"|");
-	strcat(msg,data);
-    }
-    sbc_print("Complete msg=%s,len=%d\n",msg,len);
-    return msg;
 }
-#endif
 
-sbc_rsp_msg_t *parse_msg(char *msg)
+int sending_status_error(void *buf,char *status,char *error)
 {
+    unsigned int buf_len=strlen(buf);
+    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t);
+    char buff[len+2];
+    memset(buff,0,len+2);
+    if(buf==NULL){
+	sbc_print("buf is NULL,error\n");
+	return 0;
+    }
+    memcpy(buff,buf,strlen(buf));
+    strcat(buff,"|");
+    strcat(buff,status);
+    strcat(buff,"|");
+    strcat(buff,error);
+    sbc_print("rsp msg is: \n%s\n",buff);
+    send(sockfd,buff,len,0);
+    return 0;
+}
+
+int parse_msg(char *msg)
+{
+    pthread_mutex_lock(&mutex1);
+
+    int i=0;
     if(msg==NULL){
 	sbc_print("msg is null\n");
-	return NULL;
+	return -1;
     }
     size_t len=strlen(msg);
-    sbc_print("Get msg is:%s,len=%zd\n",msg,len);
-    if(len<6){
+    //sbc_print("Get msg is:\n%s\nlen=%zd\n",msg,len);
+    if(len<sizeof(msg_header_t)){
 	sbc_print("msg size is error\n");
-	return NULL;
+	sleep(2);
+	sending_status_error(msg,STATUS_MSG_INCOMPLETE,"error");
+	return -1;
     }
-    sbc_rsp_msg_t *data=(sbc_rsp_msg_t *)malloc(sizeof(sbc_rsp_msg_t));
-    memset(data,0,len);
-    memcpy(data->header,msg,2);
-    memcpy(data->length,msg+2,4);
-    memcpy(data->roomid,msg+7,4);
-    memcpy(data->status,msg+12,sizeof(data->status));
-    sbc_print("Header:%s\n",data->header);
-    sbc_print("length:%s\n",data->length);
-    sbc_print("roomid:%s\n",data->roomid);
-    sbc_print("status:%s\n",data->status);
-    return data;
+    char *tmp_buf=malloc(len);
+    memcpy(tmp_buf,msg,len);
+    msg_header_t *header=(msg_header_t*)tmp_buf;
+    for(i=0;i<len;i++){
+	if(tmp_buf[i]=='|'){
+	    tmp_buf[i]='\0';
+	}
+    }
+
+    if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
+	sbc_print("Id is error:%s\n",header->id);
+	sleep(2);
+	sending_status_error(msg,STATUS_FORMAT_FAIL,"error");
+	return -1;
+    }
+    if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
+	sbc_print("version is error:%s\n",header->version);
+	sleep(2);
+	sending_status_error(msg,STATUS_FORMAT_FAIL,"error");
+	return -1;
+    }
+    if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
+	sbc_print("device is error:%s\n",header->device);
+	sleep(2);
+	sending_status_error(msg,STATUS_FORMAT_FAIL,"error");
+	return -1;
+    }
+    if(atoi(header->length) != len){
+	sending_status_error(msg,STATUS_MSG_INCOMPLETE,"error");
+	sleep(2);
+	sbc_print("length is error:%s\n",header->length);
+	return -1;
+    }
+
+   if(strncmp(header->itype, ITYPE_COMMITINFO,strlen(ITYPE_COMMITINFO))==0){
+	sbc_print("Handle the commit rsp\n");
+    }
+
+    if(strncmp(header->itype, ITYPE_SCAN,strlen(ITYPE_SCAN))==0){
+	sbc_print("Handle the scan rsp\n");
+    }
+
+    if(strncmp(header->itype, ITYPE_PAIR_OK,strlen(ITYPE_PAIR_OK))==0){
+	sbc_print("Handle the pair rsp\n");
+    }
+    if(strncmp(header->itype, ITYPE_HEARTBEAT,strlen(ITYPE_HEARTBEAT))==0){
+	sbc_print("Handle the hb rsp\n");
+    }
+
+    if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
+	device_status_t *data=(device_status_t *)header->data;
+	sbc_print("roomid:%s\n",data->roomid);
+	sbc_print("status:%s\n",data->status);
+	process_device_status(data);
+    }
+    free(header);
+    pthread_mutex_unlock(&mutex1);
+    return 0;
 }
 
 void *send_hb(void *addr)
 {
-#if 0
-    char *msg = makeJson();
-    char buf[sizeof(struct sbc_msg)+strlen(msg)];
-    sbc_rsp_msg_t *pd=(sbc_rsp_msg_t*)buf;
-    pd->data_type=TYPE_HB;
-    sleep(3); //定时3秒
-
-    memcpy(pd->jsdata,msg,strlen(msg));
-    unsigned int len=strlen(msg)+sizeof(struct sbc_msg);
-#endif
     hb_msg_t data_buf={
 	.bleMac=MAC_ADDRESS,
     };
-    char *msg = (char *)make_send_msg(ITYPE_HEARTBEAT,&data_buf);
+    char *msg = (char *)make_send_msg(ITYPE_HEARTBEAT,&data_buf,sizeof(hb_msg_t));
     unsigned int len=strlen(msg);
     while(1){
 	//write(sockfd,pd,sizeof(DATA_PACK));
@@ -323,7 +342,7 @@ void *recv_handler(void *addr)
 	bzero(buf,BUFLEN);
 	int len = recv(sockfd,buf,BUFLEN,0);
 	if(len > 0){
-	    sbc_print("\n服务器发来的消息是：%s,共有字节数是: %d\n",buf,len);
+	    sbc_print("\n服务器发来的消息是：\n%s\n,共有字节数是: %d\n",buf,len);
 	    parse_msg(buf);
 	}
 	else{
@@ -398,6 +417,8 @@ static char * makeJson(void)
     return p;
 }
 #endif/*}}}*/
+
+
 
 int main(int argc, char **argv)
 {
@@ -479,7 +500,7 @@ int main(int argc, char **argv)
 	sleep(1);
         /******发送消息*******/
         bzero(buf,BUFLEN);
-        sbc_print("请输入发送给对方的消息：");
+        sbc_print("请输入发送给对方的消息：\n");
         /*fgets函数：从流中读取BUFLEN-1个字符*/
         fgets(buf,BUFLEN,stdin);
         /*打印发送的消息*/
@@ -505,7 +526,18 @@ int main(int argc, char **argv)
 	    commit_msg_t data_buf={
 		.bleMac=MAC_ADDRESS,
 	    };
-	    data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf);
+	    data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf,sizeof(commit_msg_t));
+	}
+	else if(strncmp("scan",buf,4)==0){
+	    scan_msg_t data_buf={
+		.gwMac="1|",
+		.version="1|",
+		.cmdType="1|",
+		.bleMac="1|",
+		.phoneMac="1|",
+		.timestamp="1",
+	    };
+	    data=(char *)make_send_msg(ITYPE_SCAN,&data_buf,sizeof(scan_msg_t));
 	}
 	else if(strncmp("pairok",buf,6)==0){
 	    pair_msg_t data_buf={
@@ -515,7 +547,7 @@ int main(int argc, char **argv)
 		.phoneMac="1|",
 		.timestamp="1",
 	    };
-	    data=(char *)make_send_msg(ITYPE_PAIR_OK,&data_buf);
+	    data=(char *)make_send_msg(ITYPE_PAIR_OK,&data_buf,sizeof(pair_msg_t));
 	}else{
             sbc_print("Invalid cmd!\n");
 	    goto _retry;
