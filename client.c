@@ -61,7 +61,7 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #define YELLOW       "\033[1;33m"
 #define LIGHT_GRAY   "\033[0;37m"
 #define WHITE        "\033[1;37m"
-#define sbc_print(fmt,...) do {  printf(GREEN"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
+#define sbc_print(fmt,...) do {  printf(GREEN"[%d][%s]:"NONE fmt,getpid(),__func__,##__VA_ARGS__) ;} while(0)
 #define sbc_color_print(color,fmt,...) do {  printf(GREEN"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
 
 /*IP and port*/
@@ -77,11 +77,29 @@ typedef void (*sighandler_t)(int);
 int sockfd;
 #define BUFLEN 300
 
+#if 0
 /*Msg header sent to server*/
 #define DEVICE_MSG_HEAD		"01"
 #define DEVICE_HB_HEAD		"88"
 /*msg header recved*/
 #define SEVER_MSG_HEAD		"61"
+#endif
+
+/*
+ * interface type:clinet --->server
+ * */
+#define ITYPE_COMMITINFO 	"01"
+#define ITYPE_SCAN		"02"
+#define ITYPE_PAIR_OK		"03"
+#define ITYPE_HEARTBEAT		"88"
+
+/*interface type:server-->client*/
+#define ITYPE_SETSTATUS	"61"
+
+/*Mac*/
+#define MAC_ADDRESS	"11:22:33:44:55:66"
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void sig_pipe(int signo);
 
@@ -95,19 +113,113 @@ void sig_pipe(int signo)
     exit(-1);
 }
 
-typedef struct sbc_msg{
+#if 1
+typedef struct sbc_rsp_msg{
     char header[3];
     char length[5];
     char roomid[5];
     char status[3];
-}sbc_msg_t;
+}sbc_rsp_msg_t;
+#endif
+typedef struct msg_header{
+    char id[8+1];
+    char itype[2+1];
+    char length[4+1];
+    char version[2+1];
+    char own[10+1];
+    char device[12+1];
+    char data[0];
+}msg_header_t;
 
-char *get_bleMac(void)
+/*Msg struct :client to server*/
+typedef struct commit_msg_s{
+    char bleMac[17];
+}commit_msg_t;
+
+typedef struct hb_msg_s{
+    char bleMac[17];
+}hb_msg_t;
+
+typedef struct scan_msg_s{
+    char gwMac[1];
+    char version[1];
+    char cmdtype[1];
+    char bleMac[1];
+    char phonemac[1];
+    char timestamp[1];
+}scan_msg_t;
+
+typedef struct pair_msg_s{
+    char roomid[1+1];
+    char cmdType[1+1];
+    char bleMac[1+1];
+    char phoneMac[1+1];
+    char timestamp[1];
+}pair_msg_t;
+
+/*Msg struct :server to client*/
+typedef struct status_setting{
+    char roomid[1];
+    char status[1];
+}status_setting_t;
+
+char *make_send_msg(char *itype,void *data)
 {
-    return "11:22:33:44:55:66";
+    pthread_mutex_lock(&mutex);
+    char slen[5];
+    char iitype[3]="  |";
+    int i=0;
+    unsigned int data_len =0;
+
+    if(data!=NULL){
+	if(strncmp(itype,ITYPE_COMMITINFO,2)==0){
+	    data_len=sizeof(struct commit_msg_s);
+	    sbc_print("222data_len=%d\n",data_len);
+	}else if(strncmp(itype,ITYPE_SCAN,2)==0){
+	    data_len=sizeof(struct scan_msg_s);
+	}else if(strncmp(itype,ITYPE_PAIR_OK,2)==0){
+	    data_len=sizeof(struct pair_msg_s);
+	}else if(strncmp(itype,ITYPE_HEARTBEAT,2)==0){
+	    data_len=sizeof(struct hb_msg_s);
+	}else{
+	    sbc_print("Please input right cmd type\n");
+	}
+    }
+
+    unsigned len = data_len + sizeof(struct msg_header);
+    msg_header_t *header=malloc(len);
+
+    memcpy(iitype,itype,2);
+    memcpy(iitype+2,"|",1);
+    sbc_print("data_len=%d,iitype=%s\n",data_len,iitype);
+
+    sprintf(slen,"%4d|",len);
+    for(i=0;i<4;i++){
+	char *p=strstr(slen," ");
+	if(p!=NULL){
+	    memcpy(p,"0",1);
+	}
+    }
+
+    memcpy(header->id,"10000001|",sizeof(header->id));
+    memcpy(header->itype,iitype,sizeof(header->itype));
+    memcpy(header->version,"01|",sizeof(header->version));
+    memcpy(header->own,"1111111111|",sizeof(header->own));
+    memcpy(header->device,"ABCDEFGHIJKL|",sizeof(header->device));
+    memcpy(header->length,slen,sizeof(header->length));
+
+    /*cpy data*/
+    if(data!=NULL){
+	memcpy(header->data,(char*)data,data_len);
+    }
+    sbc_print("Complete msg=%s,len=%d\n",(char *)header,len);
+    pthread_mutex_unlock(&mutex);
+    return (char*)header;
 }
 
-char *make_msg(char *header,char *mac,char *data)
+
+#if 0
+char *make_send_msg(char *header,char *mac,char *data)
 {
     char *msg=malloc(BUFLEN);
     char bmac[18];
@@ -121,7 +233,7 @@ char *make_msg(char *header,char *mac,char *data)
     }
     memcpy(msg,header,strlen(header));
     if(NULL==mac){
-	memcpy(bmac,get_bleMac(),18);
+	memcpy(bmac,MAC_ADDRESS,18);
     }else
 	memcpy(bmac,mac,strlen(mac));
     if(data==NULL)
@@ -150,8 +262,9 @@ char *make_msg(char *header,char *mac,char *data)
     sbc_print("Complete msg=%s,len=%d\n",msg,len);
     return msg;
 }
+#endif
 
-sbc_msg_t *parse_msg(char *msg)
+sbc_rsp_msg_t *parse_msg(char *msg)
 {
     if(msg==NULL){
 	sbc_print("msg is null\n");
@@ -163,7 +276,7 @@ sbc_msg_t *parse_msg(char *msg)
 	sbc_print("msg size is error\n");
 	return NULL;
     }
-    sbc_msg_t *data=(sbc_msg_t *)malloc(sizeof(sbc_msg_t));
+    sbc_rsp_msg_t *data=(sbc_rsp_msg_t *)malloc(sizeof(sbc_rsp_msg_t));
     memset(data,0,len);
     memcpy(data->header,msg,2);
     memcpy(data->length,msg+2,4);
@@ -181,19 +294,22 @@ void *send_hb(void *addr)
 #if 0
     char *msg = makeJson();
     char buf[sizeof(struct sbc_msg)+strlen(msg)];
-    sbc_msg_t *pd=(sbc_msg_t*)buf;
+    sbc_rsp_msg_t *pd=(sbc_rsp_msg_t*)buf;
     pd->data_type=TYPE_HB;
     sleep(3); //定时3秒
 
     memcpy(pd->jsdata,msg,strlen(msg));
     unsigned int len=strlen(msg)+sizeof(struct sbc_msg);
 #endif
-    char *msg = (char *)make_msg(DEVICE_HB_HEAD,NULL,NULL);
+    hb_msg_t data_buf={
+	.bleMac=MAC_ADDRESS,
+    };
+    char *msg = (char *)make_send_msg(ITYPE_HEARTBEAT,&data_buf);
     unsigned int len=strlen(msg);
     while(1){
 	//write(sockfd,pd,sizeof(DATA_PACK));
         send(sockfd,msg,len,0);
-	sleep(10);
+	sleep(30);
     }
     free(msg);
     return NULL;
@@ -384,8 +500,27 @@ int main(int argc, char **argv)
 	    buf[strlen(buf)-1]=0;
 	}
 #endif
+	char *data;
+	if(strncmp(buf,"commit",5)==0){
+	    commit_msg_t data_buf={
+		.bleMac=MAC_ADDRESS,
+	    };
+	    data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf);
+	}
+	else if(strncmp("pairok",buf,6)==0){
+	    pair_msg_t data_buf={
+		.roomid="1|",
+		.cmdType="1|",
+		.bleMac="1|",
+		.phoneMac="1|",
+		.timestamp="1",
+	    };
+	    data=(char *)make_send_msg(ITYPE_PAIR_OK,&data_buf);
+	}else{
+            sbc_print("Invalid cmd!\n");
+	    goto _retry;
+	}
 
-	char *data=(char *)make_msg(DEVICE_MSG_HEAD,NULL,buf);
 	unsigned int wsize=strlen(data);
 	//len = send(sockfd,&sbdata,sizeof(struct sbc_msg),0);
 	len = send(sockfd,data,wsize,0);
@@ -394,6 +529,7 @@ int main(int argc, char **argv)
             sbc_print("消息发送成功，本次共发送的字节数是：%d\n",len);
         else{
             sbc_print("消息发送失败!\n");
+	    sleep(5);
             break;
         }
     }

@@ -176,9 +176,9 @@ int main(int argc, char **argv)
             bzero(buf,BUFLEN);
             len = recv(newfd,buf,BUFLEN,0);
             if(len > 0){
-		    printf("\n客户端发来的信息是：%s,共有字节数是: %d\n",buf,len);
-		    char *msg = (char *)make_msg(SEVER_MSG_HEAD,"8888","01");
-		    send(newfd,msg,strlen(msg),0);
+		    printf("\n客户端发来的信息是：\n%s,共有字节数是: %d\n",buf,len);
+		    //char *msg = (char *)make_msg(SEVER_MSG_HEAD,"8888","01");
+		    //send(newfd,msg,strlen(msg),0);
 	    }
             else{
                 if(len < 0 )
