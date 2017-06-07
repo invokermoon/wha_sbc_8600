@@ -39,7 +39,7 @@ $(info client_objs_out=$(client_objs_out))
 CC      := gcc
 CFLAGS  := -ggdb -Wall -DBUILD_TIME="\"`date`\"" -DDEBUG_
 INCLUDE := -I ./
-LIB     := -lpthread -ldl -ljpeg -lrt -lm
+LIB     := -lpthread -ldl -lrt -lm
 
 .PHONY: clean all
 

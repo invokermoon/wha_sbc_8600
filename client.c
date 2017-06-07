@@ -174,7 +174,6 @@ char *make_send_msg(char *itype,void *data)
     if(data!=NULL){
 	if(strncmp(itype,ITYPE_COMMITINFO,2)==0){
 	    data_len=sizeof(struct commit_msg_s);
-	    sbc_print("222data_len=%d\n",data_len);
 	}else if(strncmp(itype,ITYPE_SCAN,2)==0){
 	    data_len=sizeof(struct scan_msg_s);
 	}else if(strncmp(itype,ITYPE_PAIR_OK,2)==0){
@@ -187,7 +186,8 @@ char *make_send_msg(char *itype,void *data)
     }
 
     unsigned len = data_len + sizeof(struct msg_header);
-    msg_header_t *header=malloc(len);
+    msg_header_t *header=malloc(len+5);
+    memset(header,0,len+5);
 
     memcpy(iitype,itype,2);
     memcpy(iitype+2,"|",1);
