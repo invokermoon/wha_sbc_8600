@@ -111,6 +111,7 @@ int recv_setting(msg_header_t *buf,unsigned int len)
     device_status_t *data=(device_status_t *)buf->data;
     sbc_print("roomid:%s\n",data->roomid);
     sbc_print("status:%s\n",data->status);
+    sending_response(buf,STATUS_FORMAT_FAIL,"error");
     return 0;
 }
 

@@ -83,9 +83,16 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #define STATUS_INSIDE_ERROR	"73"
 
 
+/*MSG header and tail*/
+#define MSG_HEADER_STRING	"<<"
+#define MSG_TAIL_STRING		">>"
+
+
+
 
 /*Common msg header*/
 typedef struct msg_header{
+    char head[2];
     char id[8+1];
     char itype[2+1];
     char length[4+1];
@@ -175,11 +182,12 @@ char *sending_status_error(void *buf,char *status,char *error)
 	sbc_print("buf is NULL,error\n");
 	return 0;
     }
-    memcpy(buff,buf,strlen(buf));
+    memcpy(buff,buf,strlen(buf)-strlen(MSG_TAIL_STRING));
     strcat(buff,"|");
     strcat(buff,status);
     strcat(buff,"|");
     strcat(buff,error);
+    strcat(buff,MSG_TAIL_STRING);
     sbc_print("rsp msg is: \n%s\n",buff);
     return buff;
 }

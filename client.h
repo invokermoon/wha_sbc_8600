@@ -42,6 +42,7 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <sys/mman.h>
 #include <termios.h>
 #include "cJSON.h"
+#include "list.h"
 
 
 /*color for print*/
@@ -73,6 +74,10 @@ int sockfd;
 
 #define BUFLEN 300
 
+/*MSG header and tail*/
+#define MSG_HEADER_STRING	"<<"
+#define MSG_TAIL_STRING		">>"
+
 /*
  * interface type:clinet --->server
  * */
@@ -98,6 +103,7 @@ int sockfd;
 
 /*Common msg header*/
 typedef struct msg_header{
+    char head[2];/*message header string*/
     char id[8+1];
     char itype[2+1];
     char length[4+1];
@@ -144,10 +150,16 @@ typedef struct device_status_s{
     char status[1];
 }device_status_t;
 
+typedef struct message_s{
+    char one_msg[BUFLEN];
+    int valid;
+    struct list_head list;
+}message_t;
 
 
 /****Funcs****/
 char *make_send_msg(char *itype,void *data, unsigned int data_len);
+int sending_response(void *buf,char *status,char *error);
 
 struct handler_driver;
 typedef int (*cmd_scan_f)(void *,unsigned int);

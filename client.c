@@ -46,6 +46,10 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 int ThreadsExit=1;
 pthread_t p_tid[2];
 
+/*Global list head*/
+LIST_HEAD(message_list);
+
+
 typedef void (*sighandler_t)(int);
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -74,7 +78,8 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
 	return NULL;
     }
 
-    unsigned len = data_len + sizeof(struct msg_header);
+    unsigned len = data_len + sizeof(struct msg_header) + strlen(MSG_TAIL_STRING);
+
     msg_header_t *header=malloc(len+1);
     memset(header,0,len+1);
 
@@ -90,6 +95,7 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
 	}
     }
 
+    memcpy(header->head,MSG_HEADER_STRING,sizeof(header->head));
     memcpy(header->id,MSG_ID,sizeof(header->id));
     memcpy(header->itype,iitype,sizeof(header->itype));
     memcpy(header->version,VERSION,sizeof(header->version));
@@ -101,6 +107,9 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     if((data!=NULL)&&(data_len!=0)){
 	memcpy(header->data,(char*)data,data_len);
     }
+    /*add the tail mask*/
+    memcpy(header->data+data_len,MSG_TAIL_STRING,strlen(MSG_TAIL_STRING));
+
     sbc_print("Complete msg:\n%s\nlen=%d\n",(char *)header,len);
     pthread_mutex_unlock(&mutex);
     return (char*)header;
@@ -132,60 +141,56 @@ int sending_response(void *buf,char *status,char *error)
     return 0;
 }
 
-int parse_msg(char *msg)
+int parse_one_message(char *msg)
 {
-    pthread_mutex_lock(&mutex1);
-
     int i=0;
     if(msg==NULL){
 	sbc_print("msg is null\n");
 	return -1;
     }
     size_t len=strlen(msg);
-    //sbc_print("Get msg is:\n%s\nlen=%zd\n",msg,len);
+    sbc_print("Get one msg is:\n%s\nlen=%zd\n",msg,len);
     if(len<sizeof(msg_header_t)){
-	sbc_print("msg size is error\n");
-	sleep(2);
-	sending_response(msg,STATUS_MSG_INCOMPLETE,"error");
+	sbc_print("message size is error\n");
+	sleep(1);
 	return -1;
     }
     char *tmp_buf=malloc(len+1);
     memset(tmp_buf,0,len+1);
     memcpy(tmp_buf,msg,len);
     msg_header_t *header=(msg_header_t*)tmp_buf;
+
+    /*remove all the | and << and >>*/
     for(i=0;i<len;i++){
 	if(tmp_buf[i]=='|'){
 	    tmp_buf[i]='\0';
+	}else if(tmp_buf[i]=='<'){
+	    tmp_buf[i]='\0';
+	}else if(tmp_buf[i]=='>'){
+	    tmp_buf[i]=0;
 	}
     }
 
-    /*ignore to response the rsp msg*/
-    if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
-	if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
-	    sbc_print("Id is error:%s\n",header->id);
-	    sleep(2);
-	    sending_response(msg,STATUS_FORMAT_FAIL,"error");
-	    return -1;
-	}
-	if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
-	    sbc_print("version is error:%s\n",header->version);
-	    sleep(2);
-	    sending_response(msg,STATUS_FORMAT_FAIL,"error");
-	    return -1;
-	}
-	if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
-	    sbc_print("device is error:%s\n",header->device);
-	    sending_response(msg,STATUS_FORMAT_FAIL,"error");
-	    sleep(2);
-	    return -1;
-	}
+    if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
+	sbc_print("Id is error:%s\n",header->id);
+	//sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	return -1;
+    }
+    if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
+	sbc_print("version is error:%s\n",header->version);
+	//sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	return -1;
+    }
+    if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
+	//sbc_print("device is error:%s\n",header->device);
+	sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	return -1;
+    }
 
-	if(atoi(header->length) != len){
-	    sending_response(msg,STATUS_MSG_INCOMPLETE,"error");
-	    sbc_print("length is error:%s\n",header->length);
-	    sleep(2);
-	    return -1;
-	}
+    if(atoi(header->length) != len){
+	//sending_response(msg,STATUS_MSG_INCOMPLETE,"error");
+	sbc_print("length is error:%s\n",header->length);
+	return -1;
     }
 
    if(strncmp(header->itype, ITYPE_COMMITINFO,strlen(ITYPE_COMMITINFO))==0){
@@ -198,9 +203,10 @@ int parse_msg(char *msg)
 	handler->funcs.recv_hb_rsp(header,0);
     }else if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
 	handler->funcs.recv_setting(header,0);
+    }else{
+	sbc_print("Invalid cmd type =%s\n",header->itype);
     }
     free(header);
-    pthread_mutex_unlock(&mutex1);
     return 0;
 }
 
@@ -220,6 +226,107 @@ void *send_hb(void *addr)
     return NULL;
 }
 
+struct message_s *find_invalid_message()
+{
+    struct list_head *plist,*pnode;
+    list_for_each_safe(plist,pnode,&message_list){
+	struct message_s *node = list_entry(plist,struct message_s,list);    
+	sbc_print("Read list =%s\n",node->one_msg);
+	if(node->valid==0){
+	    return node;
+	}
+    }
+    return NULL;
+}
+
+void print_message_list()
+{
+    struct list_head *plist,*pnode;
+    list_for_each_safe(plist,pnode,&message_list){
+	struct message_s *node = list_entry(plist,struct message_s,list);    
+	sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
+    }
+}
+
+int parse_message(char *buf)
+{
+    pthread_mutex_lock(&mutex1);
+
+    unsigned int buf_len;
+    char *spos;
+    char *hpos;
+    char *tpos;
+__parse:
+    buf_len=strlen(buf);
+    spos=buf;
+    hpos = strstr(buf,MSG_HEADER_STRING);
+    tpos = strstr(buf,MSG_TAIL_STRING);
+    /*There is must a point that if there is only  "<<", it must be in the first 2 bytes
+     * Just 4 situations:
+     * 1:<<XXXXXXX>> or <<XXXXXXX>><<XXXXXXX****
+     * 2:XXXXXXX
+     * 3:<<XXXXXXX
+     * 4:>><<XXXXXXX or XXXX>><<XXXX******
+     * */
+    sbc_print("hpos=0x%p,tpos=0x%p,spos=0x%p,buf_len=%d\n",hpos,tpos,spos,buf_len);
+    if(hpos && tpos && (hpos < tpos)){
+	struct message_s *p=malloc(sizeof(message_t));
+	memset(p,0,sizeof(message_t));
+	memcpy(p->one_msg,hpos,tpos-hpos+2);
+	p->valid=1;
+	list_add(&p->list, &message_list);
+
+	if(buf_len > (tpos-hpos+2)){
+	    buf=tpos+2;
+	    goto __parse;
+	}
+
+    }else if(!hpos && !tpos){
+	struct message_s *p=find_invalid_message();
+	if(p){
+	    memcpy(p->one_msg+strlen(p->one_msg),spos,buf_len);
+	    p->valid=0;
+	}
+
+    }else if( hpos && !tpos){
+	struct message_s *p=malloc(sizeof(message_t));
+	memset(p,0,sizeof(message_t));
+	memcpy(p->one_msg,hpos,buf_len);
+	p->valid=0;
+	list_add(&p->list, &message_list);
+
+    }else if(hpos && tpos && tpos < hpos){
+	struct message_s *p=find_invalid_message();
+	if(p){
+	    memcpy(p->one_msg+strlen(p->one_msg),spos,tpos-spos+2);
+	    p->valid=1;
+
+	    /*transfer to situation 3*/
+	    buf=hpos;
+	    goto __parse;
+	}
+    }
+
+    struct list_head *plist,*pnode;
+    list_for_each_safe(plist,pnode,&message_list){
+	struct message_s *node = list_entry(plist,struct message_s,list);    
+	sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
+	if(node->valid){
+	    parse_one_message(node->one_msg);
+	    list_del_init(plist);
+	    free(node);
+	}
+    }
+
+    pthread_mutex_unlock(&mutex1);
+    return 0;
+}
+
+
+
+
+
+
 void *recv_handler(void *addr)
 {
     while(1){
@@ -229,7 +336,7 @@ void *recv_handler(void *addr)
 	int len = recv(sockfd,buf,BUFLEN,0);
 	if(len > 0){
 	    sbc_print("\n服务器发来的消息是：\n%s\n,共有字节数是: %d\n",buf,len);
-	    parse_msg(buf);
+	    parse_message(buf);
 	}
 	else{
 	    if(len < 0 )
@@ -418,7 +525,7 @@ int main(int argc, char **argv)
 	    goto _retry;
 	}
 
-#if 0
+#if 0/*{{{*/
 	//char *data;
 	unsigned int wsize=strlen(data);
 	//len = send(sockfd,&sbdata,sizeof(struct sbc_msg),0);
@@ -431,7 +538,7 @@ int main(int argc, char **argv)
 	    sleep(5);
             break;
         }
-#endif
+#endif/*}}}*/
     }
     close(sockfd);
 
