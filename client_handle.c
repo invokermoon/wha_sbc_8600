@@ -30,43 +30,132 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include<stdlib.h>
 #include "client.h"
 
-int send_scan(void *buf,unsigned int len)
+int send_scan(void *buf,unsigned int length)
 {
+    scan_msg_t data_buf={
+	.gwMac="1|",
+	.version="1|",
+	.cmdType="1|",
+	.bleMac="1|",
+	.phoneMac="1|",
+	.timestamp="1",
+    };
+    char *data=(char *)make_send_msg(ITYPE_SCAN,&data_buf,sizeof(scan_msg_t));
+
+    unsigned int wsize=strlen(data);
+    socklen_t len = send(sockfd,data,wsize,0);
+    if(len > 0)
+	sbc_print("Send success：%d\n",len);
+    else{
+	sbc_print("Send fail!\n");
+	sleep(1);
+    }
+
+    free(data);
+
     return 0;
 }
 
-int send_commit(void *buf,unsigned int len)
+int send_commit(void *buf,unsigned int length)
 {
+    commit_msg_t data_buf={
+	.bleMac=MAC_ADDRESS,
+    };
+    char *data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf,sizeof(commit_msg_t));
+    unsigned int wsize=strlen(data);
+    socklen_t len = send(sockfd,data,wsize,0);
+    if(len > 0)
+	sbc_print("Send success：%d\n",len);
+    else{
+	sbc_print("Send fail!\n");
+	sleep(1);
+    }
+
+    free(data);
     return 0;
 }
-int send_pair(void *buf,unsigned int len)
+int send_pair(void *buf,unsigned int length)
 {
+    pair_msg_t data_buf={
+	.roomid="1|",
+	.cmdType="1|",
+	.bleMac="1|",
+	.phoneMac="1|",
+	.timestamp="1",
+    };
+    char *data=(char *)make_send_msg(ITYPE_PAIR_OK,&data_buf,sizeof(pair_msg_t));
+    unsigned int wsize=strlen(data);
+    socklen_t len = send(sockfd,data,wsize,0);
+    if(len > 0)
+	sbc_print("Send success：%d\n",len);
+    else{
+	sbc_print("Send fail!\n");
+	sleep(1);
+    }
+
+
+    free(data);
+
     return 0;
 }
 
+#if 0
 int send_heatbeat(void *buf,unsigned int len)
 {
     return 0;
 }
+#endif
 
-int recv_setting(void *buf,unsigned int len)
+int recv_setting(msg_header_t *buf,unsigned int len)
 {
+    device_status_t *data=(device_status_t *)buf->data;
+    sbc_print("roomid:%s\n",data->roomid);
+    sbc_print("status:%s\n",data->status);
     return 0;
 }
 
-static struct handler_driver SBC8600= {
+int commit_rsp(msg_header_t *buf,unsigned int len)
+{
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(commit_msg_t)+1);
+    sbc_print("Handle the commit rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    return 0;
+}
+
+int scan_rsp(msg_header_t *buf,unsigned int len)
+{
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(scan_msg_t)+1);
+    sbc_print("Handle the scan rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    return 0;
+}
+
+int pair_rsp(msg_header_t *buf,unsigned int len)
+{
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(pair_msg_t)+1);
+    sbc_print("Handle the pair rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    return 0;
+}
+
+int hb_rsp(msg_header_t *buf,unsigned int len)
+{
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(hb_msg_t)+1);
+    sbc_print("Handle the hb rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    return 0;
+}
+
+struct handler_driver SBC8600= {
 	.sname = "SBC",
 	.funcs = {
 	    .send_scan=&send_scan,
 	    .send_commit=&send_commit,
 	    .send_pair=&send_pair,
-	    .send_hb=&send_heatbeat,
+	    .send_hb=NULL,
 	    .recv_setting=&recv_setting,
-	    .rsp_scan=NULL,
-	    .rsp_commit=NULL,
-	    .rsp_pair=NULL,
-	    .rsp_hb=NULL,
+	    .recv_scan_rsp=&scan_rsp,
+	    .recv_commit_rsp=&commit_rsp,
+	    .recv_pair_rsp=&pair_rsp,
+	    .recv_hb_rsp=&hb_rsp,
 	}
 };
 
 define_drvinit(SBC8600);
+

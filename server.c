@@ -157,7 +157,7 @@ char *sending_status_error(void *buf,char *status,char *error)
 	char slen[5];
 	int i=0;
 	unsigned src_len=atoi(header->length);
-	sbc_print("src_len is %d\n",src_len);
+//	sbc_print("src_len is %d\n",src_len);
 	src_len+=sizeof(msg_header_t);
 	sprintf(slen,"%4d|",len);
 	for(i=0;i<4;i++){

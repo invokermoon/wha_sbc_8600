@@ -26,8 +26,6 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 *ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 *POSSIBILITY OF SUCH DAMAGE.
 */
-#include<stdio.h>
-#include<stdlib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,70 +41,12 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <pthread.h>
 #include <termios.h>
 #include "cJSON.h"
-
-/*color for print*/
-#define NONE         "\033[m"
-#define RED          "\033[0;32;31m"
-#define LIGHT_RED    "\033[1;31m"
-#define GREEN        "\033[0;32;32m"
-#define LIGHT_GREEN  "\033[1;32m"
-#define BLUE         "\033[0;32;34m"
-#define LIGHT_BLUE   "\033[1;34m"
-#define DARY_GRAY    "\033[1;30m"
-#define CYAN         "\033[0;36m"
-#define LIGHT_CYAN   "\033[1;36m"
-#define PURPLE       "\033[0;35m"
-#define LIGHT_PURPLE "\033[1;35m"
-#define BROWN        "\033[0;33m"
-#define YELLOW       "\033[1;33m"
-#define LIGHT_GRAY   "\033[0;37m"
-#define WHITE        "\033[1;37m"
-#define sbc_print(fmt,...) do {  printf(GREEN"[%d][%s]:"NONE fmt,getpid(),__func__,##__VA_ARGS__) ;} while(0)
-#define sbc_color_print(color,fmt,...) do {  printf(GREEN"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
-
-/*IP and port*/
-#define IP_ADDR	"106.14.60.75"
-#define IP_PORT	8668
-
+#include "client.h"
 
 int ThreadsExit=1;
 pthread_t p_tid[2];
 
 typedef void (*sighandler_t)(int);
-
-int sockfd;
-#define BUFLEN 300
-
-#if 0
-/*Msg header sent to server*/
-#define DEVICE_MSG_HEAD		"01"
-#define DEVICE_HB_HEAD		"88"
-/*msg header recved*/
-#define SEVER_MSG_HEAD		"61"
-#endif
-
-/*
- * interface type:clinet --->server
- * */
-#define ITYPE_COMMITINFO 	"01"
-#define ITYPE_SCAN		"02"
-#define ITYPE_PAIR_OK		"03"
-#define ITYPE_HEARTBEAT		"88"
-
-/*interface type:server-->client*/
-#define ITYPE_SETSTATUS	"61"
-
-/*Mac*/
-#define MAC_ADDRESS	"11:22:33:44:55:66"
-
-#define MSG_ID		"10000001|"
-#define VERSION		"01|"
-#define DEVICE		"ABCDEFGHIJKL|"
-/*Rsp status*/
-#define STATUS_OK 		"00"
-#define STATUS_FORMAT_FAIL	"71"
-#define STATUS_MSG_INCOMPLETE	"72"
-#define STATUS_INSIDE_ERROR	"73"
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
@@ -122,55 +62,6 @@ void sig_pipe(int signo)
     }
     exit(-1);
 }
-
-/*Common msg header*/
-typedef struct msg_header{
-    char id[8+1];
-    char itype[2+1];
-    char length[4+1];
-    char version[2+1];
-    char own[10+1];
-    char device[12+1];
-    char data[0];
-}msg_header_t;
-/*Common msg rsp*/
-typedef struct msg_rsp_s{
-    char status[2+1];
-    char error[5];
-}msg_rsp_t;
-
-/*Msg struct :client to server*/
-typedef struct commit_msg_s{
-    char bleMac[17];
-}commit_msg_t;
-
-typedef struct hb_msg_s{
-    char bleMac[17];
-}hb_msg_t;
-
-typedef struct scan_msg_s{
-    char gwMac[1+1];
-    char version[1+1];
-    char cmdType[1+1];
-    char bleMac[1+1];
-    char phoneMac[1+1];
-    char timestamp[1];
-}scan_msg_t;
-
-typedef struct pair_msg_s{
-    char roomid[1+1];
-    char cmdType[1+1];
-    char bleMac[1+1];
-    char phoneMac[1+1];
-    char timestamp[1];
-}pair_msg_t;
-
-/*Msg struct :server to client*/
-typedef struct device_status_s{
-    char roomid[1+1];
-    char status[1];
-}device_status_t;
-
 
 char *make_send_msg(char *itype,void *data, unsigned int data_len)
 {
@@ -221,7 +112,7 @@ int process_device_status(device_status_t *data)
 
 }
 
-int sending_status_error(void *buf,char *status,char *error)
+int sending_response(void *buf,char *status,char *error)
 {
     unsigned int buf_len=strlen(buf);
     unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t);
@@ -255,10 +146,11 @@ int parse_msg(char *msg)
     if(len<sizeof(msg_header_t)){
 	sbc_print("msg size is error\n");
 	sleep(2);
-	sending_status_error(msg,STATUS_MSG_INCOMPLETE,"error");
+	sending_response(msg,STATUS_MSG_INCOMPLETE,"error");
 	return -1;
     }
-    char *tmp_buf=malloc(len);
+    char *tmp_buf=malloc(len+1);
+    memset(tmp_buf,0,len+1);
     memcpy(tmp_buf,msg,len);
     msg_header_t *header=(msg_header_t*)tmp_buf;
     for(i=0;i<len;i++){
@@ -267,51 +159,45 @@ int parse_msg(char *msg)
 	}
     }
 
-    if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
-	sbc_print("Id is error:%s\n",header->id);
-	sleep(2);
-	sending_status_error(msg,STATUS_FORMAT_FAIL,"error");
-	return -1;
-    }
-    if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
-	sbc_print("version is error:%s\n",header->version);
-	sleep(2);
-	sending_status_error(msg,STATUS_FORMAT_FAIL,"error");
-	return -1;
-    }
-    if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
-	sbc_print("device is error:%s\n",header->device);
-	sleep(2);
-	sending_status_error(msg,STATUS_FORMAT_FAIL,"error");
-	return -1;
-    }
-    if(atoi(header->length) != len){
-	sending_status_error(msg,STATUS_MSG_INCOMPLETE,"error");
-	sleep(2);
-	sbc_print("length is error:%s\n",header->length);
-	return -1;
+    /*ignore to response the rsp msg*/
+    if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
+	if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
+	    sbc_print("Id is error:%s\n",header->id);
+	    sleep(2);
+	    sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	    return -1;
+	}
+	if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
+	    sbc_print("version is error:%s\n",header->version);
+	    sleep(2);
+	    sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	    return -1;
+	}
+	if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
+	    sbc_print("device is error:%s\n",header->device);
+	    sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	    sleep(2);
+	    return -1;
+	}
+
+	if(atoi(header->length) != len){
+	    sending_response(msg,STATUS_MSG_INCOMPLETE,"error");
+	    sbc_print("length is error:%s\n",header->length);
+	    sleep(2);
+	    return -1;
+	}
     }
 
    if(strncmp(header->itype, ITYPE_COMMITINFO,strlen(ITYPE_COMMITINFO))==0){
-	sbc_print("Handle the commit rsp\n");
-    }
-
-    if(strncmp(header->itype, ITYPE_SCAN,strlen(ITYPE_SCAN))==0){
-	sbc_print("Handle the scan rsp\n");
-    }
-
-    if(strncmp(header->itype, ITYPE_PAIR_OK,strlen(ITYPE_PAIR_OK))==0){
-	sbc_print("Handle the pair rsp\n");
-    }
-    if(strncmp(header->itype, ITYPE_HEARTBEAT,strlen(ITYPE_HEARTBEAT))==0){
-	sbc_print("Handle the hb rsp\n");
-    }
-
-    if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
-	device_status_t *data=(device_status_t *)header->data;
-	sbc_print("roomid:%s\n",data->roomid);
-	sbc_print("status:%s\n",data->status);
-	process_device_status(data);
+	handler->funcs.recv_commit_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_SCAN,strlen(ITYPE_SCAN))==0){
+	handler->funcs.recv_scan_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_PAIR_OK,strlen(ITYPE_PAIR_OK))==0){
+	handler->funcs.recv_pair_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_HEARTBEAT,strlen(ITYPE_HEARTBEAT))==0){
+	handler->funcs.recv_hb_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
+	handler->funcs.recv_setting(header,0);
     }
     free(header);
     pthread_mutex_unlock(&mutex1);
@@ -418,12 +304,10 @@ static char * makeJson(void)
 }
 #endif/*}}}*/
 
-
-
 int main(int argc, char **argv)
 {
     struct sockaddr_in s_addr;
-    socklen_t len;
+    //socklen_t len;
     unsigned int port;
     char buf[BUFLEN];
     char ip_addr[20];
@@ -521,38 +405,21 @@ int main(int argc, char **argv)
 	    buf[strlen(buf)-1]=0;
 	}
 #endif
-	char *data;
 	if(strncmp(buf,"commit",5)==0){
-	    commit_msg_t data_buf={
-		.bleMac=MAC_ADDRESS,
-	    };
-	    data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf,sizeof(commit_msg_t));
+	    handler->funcs.send_commit(NULL,0);
 	}
 	else if(strncmp("scan",buf,4)==0){
-	    scan_msg_t data_buf={
-		.gwMac="1|",
-		.version="1|",
-		.cmdType="1|",
-		.bleMac="1|",
-		.phoneMac="1|",
-		.timestamp="1",
-	    };
-	    data=(char *)make_send_msg(ITYPE_SCAN,&data_buf,sizeof(scan_msg_t));
+	    handler->funcs.send_scan(NULL,0);
 	}
 	else if(strncmp("pairok",buf,6)==0){
-	    pair_msg_t data_buf={
-		.roomid="1|",
-		.cmdType="1|",
-		.bleMac="1|",
-		.phoneMac="1|",
-		.timestamp="1",
-	    };
-	    data=(char *)make_send_msg(ITYPE_PAIR_OK,&data_buf,sizeof(pair_msg_t));
+	    handler->funcs.send_pair(NULL,0);
 	}else{
-            sbc_print("Invalid cmd!\n");
+	    sbc_print("Invalid cmd!\n");
 	    goto _retry;
 	}
 
+#if 0
+	//char *data;
 	unsigned int wsize=strlen(data);
 	//len = send(sockfd,&sbdata,sizeof(struct sbc_msg),0);
 	len = send(sockfd,data,wsize,0);
@@ -564,8 +431,8 @@ int main(int argc, char **argv)
 	    sleep(5);
             break;
         }
+#endif
     }
-    /*关闭连接*/
     close(sockfd);
 
     return 0;
