@@ -259,6 +259,14 @@ int main(int argc, char **argv)
 		    printf("\n客户端发来的信息是：\n%s,共有字节数是: %d\n",buf,len);
 		    char *msg = sending_status_error(buf,STATUS_OK,"error");
 		    send(newfd,msg,strlen(msg),0);
+		    char *msg2 ="<<10000001|88|0074|01|1111111111|ABCDEFGHIJKL|";
+		    send(newfd,msg2,strlen(msg2),0);
+		    sleep(1);
+		    char *msg3	="11:22:33:44:55:66|";
+		    send(newfd,msg3,strlen(msg3),0);
+		    sleep(1);
+		    char *msg4	="00|error>>";
+		    send(newfd,msg4,strlen(msg4),0);
 		    free(msg);
 	    }
             else{

@@ -264,7 +264,7 @@ __parse:
     /*There is must a point that if there is only  "<<", it must be in the first 2 bytes
      * Just 4 situations:
      * 1:<<XXXXXXX>> or <<XXXXXXX>><<XXXXXXX****
-     * 2:XXXXXXX
+     * 2:XXXXXXX or XXXXXX>>
      * 3:<<XXXXXXX
      * 4:>><<XXXXXXX or XXXX>><<XXXX******
      * */
@@ -281,12 +281,16 @@ __parse:
 	    goto __parse;
 	}
 
-    }else if(!hpos && !tpos){
+    }else if(!hpos){
 	struct message_s *p=find_invalid_message();
-	if(p){
+	if(p && !tpos){
 	    memcpy(p->one_msg+strlen(p->one_msg),spos,buf_len);
 	    p->valid=0;
+	}else if(p && tpos){
+	    memcpy(p->one_msg+strlen(p->one_msg),spos,buf_len);
+	    p->valid=1;
 	}
+
 
     }else if( hpos && !tpos){
 	struct message_s *p=malloc(sizeof(message_t));
