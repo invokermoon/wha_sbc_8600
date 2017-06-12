@@ -70,9 +70,8 @@ void sig_pipe(int signo)
 char *make_send_msg(char *itype,void *data, unsigned int data_len)
 {
     pthread_mutex_lock(&mutex);
-    char slen[5];
+    char slen[6];
     char iitype[4]={0};
-    int i=0;
     if(data==NULL||data==0){
 	sbc_print("data is null,make msg fail\n");
 	return NULL;
@@ -87,13 +86,7 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     memcpy(iitype+2,"|",1);
     sbc_print("data_len=%d,iitype=%s\n",data_len,iitype);
 
-    sprintf(slen,"%4d|",len);
-    for(i=0;i<4;i++){
-	char *p=strstr(slen," ");
-	if(p!=NULL){
-	    memcpy(p,"0",1);
-	}
-    }
+    sprintf(slen,"%04d|",len);
 
     memcpy(header->head,MSG_HEADER_STRING,sizeof(header->head));
     memcpy(header->id,MSG_ID,sizeof(header->id));
@@ -124,7 +117,11 @@ int process_device_status(device_status_t *data)
 int sending_response(void *buf,char *status,char *error)
 {
     unsigned int buf_len=strlen(buf);
-    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t);
+    unsigned int error_len=strlen(error);
+    if(error)
+	error_len=strlen(error);
+
+    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len;
     char buff[len+2];
     memset(buff,0,len+2);
     if(buf==NULL){
@@ -231,7 +228,7 @@ struct message_s *find_invalid_message()
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
 	struct message_s *node = list_entry(plist,struct message_s,list);    
-	sbc_print("Read list =%s\n",node->one_msg);
+	//sbc_print("Read list =%s\n",node->one_msg);
 	if(node->valid==0){
 	    return node;
 	}
@@ -268,7 +265,7 @@ __parse:
      * 3:<<XXXXXXX
      * 4:>><<XXXXXXX or XXXX>><<XXXX******
      * */
-    sbc_print("hpos=0x%p,tpos=0x%p,spos=0x%p,buf_len=%d\n",hpos,tpos,spos,buf_len);
+    //sbc_print("hpos=0x%p,tpos=0x%p,spos=0x%p,buf_len=%d\n",hpos,tpos,spos,buf_len);
     if(hpos && tpos && (hpos < tpos)){
 	struct message_s *p=malloc(sizeof(message_t));
 	memset(p,0,sizeof(message_t));
@@ -311,10 +308,12 @@ __parse:
 	}
     }
 
+    //print_message_list();
+
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
 	struct message_s *node = list_entry(plist,struct message_s,list);    
-	sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
+	//sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
 	if(node->valid){
 	    parse_one_message(node->one_msg);
 	    list_del_init(plist);
@@ -322,13 +321,11 @@ __parse:
 	}
     }
 
+    //print_message_list();
+
     pthread_mutex_unlock(&mutex1);
     return 0;
 }
-
-
-
-
 
 
 void *recv_handler(void *addr)
@@ -339,7 +336,7 @@ void *recv_handler(void *addr)
 	bzero(buf,BUFLEN);
 	int len = recv(sockfd,buf,BUFLEN,0);
 	if(len > 0){
-	    sbc_print("\n服务器发来的消息是：\n%s\n,共有字节数是: %d\n",buf,len);
+	    //sbc_print("\n服务器发来的消息是：\n%s\n,共有字节数是: %d\n",buf,len);
 	    parse_message(buf);
 	}
 	else{

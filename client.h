@@ -115,7 +115,7 @@ typedef struct msg_header{
 /*Common msg rsp*/
 typedef struct msg_rsp_s{
     char status[2+1];
-    char error[5];
+    char error[0];
 }msg_rsp_t;
 
 /*Msg struct :client to server*/

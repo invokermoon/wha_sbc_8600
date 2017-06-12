@@ -104,7 +104,7 @@ typedef struct msg_header{
 /*Common msg rsp*/
 typedef struct msg_rsp_s{
     char status[2+1];
-    char error[5];
+    char error[0];
 }msg_rsp_t;
 
 
@@ -127,8 +127,7 @@ void sig_pipe(int signo)
 char *make_msg(char *header,char *roomid,char *status)
 {
     char *msg=malloc(BUFLEN);
-    char slen[5];
-    int i=0;
+    char slen[6];
     unsigned int len=6+strlen(roomid)+strlen(status)+strlen("|")*2;
     memset(msg,0,BUFLEN);
     if(header==NULL||roomid==NULL||status==NULL){
@@ -137,13 +136,7 @@ char *make_msg(char *header,char *roomid,char *status)
 	return NULL;
     }
     memcpy(msg,header,strlen(header));
-    sprintf(slen,"%4d|",len);
-    for(i=0;i<4;i++){
-	char *p=strstr(slen," ");
-	if(p!=NULL){
-	    memcpy(p,"0",1);
-	}
-    }
+    sprintf(slen,"%04d|",len);
 
     strcat(msg,slen);
     strcat(msg,roomid);
@@ -157,22 +150,18 @@ char *make_msg(char *header,char *roomid,char *status)
 char *sending_status_error(void *buf,char *status,char *error)
 {
     unsigned int buf_len=strlen(buf);
-    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t);
+    unsigned int error_len=strlen(error);
+    if(error)
+	error_len=strlen(error);
+    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len;
     msg_header_t *header=(msg_header_t*)buf;
     /*chanege the length*/
     {
-	char slen[5];
-	int i=0;
+	char slen[6];
 	unsigned src_len=atoi(header->length);
 //	sbc_print("src_len is %d\n",src_len);
 	src_len+=sizeof(msg_header_t);
-	sprintf(slen,"%4d|",len);
-	for(i=0;i<4;i++){
-	    char *p=strstr(slen," ");
-	    if(p!=NULL){
-		memcpy(p,"0",1);
-	    }
-	}
+	sprintf(slen,"%04d|",len);
 	memcpy(header->length,slen,sizeof(header->length));
     }
 
@@ -257,7 +246,7 @@ int main(int argc, char **argv)
             len = recv(newfd,buf,BUFLEN,0);
             if(len > 0){
 		    printf("\n客户端发来的信息是：\n%s,共有字节数是: %d\n",buf,len);
-		    char *msg = sending_status_error(buf,STATUS_OK,"error");
+		    char *msg = sending_status_error(buf,STATUS_OK,"worinidayedeaaaa");
 		    send(newfd,msg,strlen(msg),0);
 		    char *msg2 ="<<10000001|88|0074|01|1111111111|ABCDEFGHIJKL|";
 		    send(newfd,msg2,strlen(msg2),0);
