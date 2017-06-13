@@ -160,6 +160,7 @@ typedef struct message_s{
 /****Funcs****/
 char *make_send_msg(char *itype,void *data, unsigned int data_len);
 int sending_response(void *buf,char *status,char *error);
+void *serial_init(void *addr);
 
 struct handler_driver;
 typedef int (*cmd_scan_f)(void *,unsigned int);

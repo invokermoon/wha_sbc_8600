@@ -7,6 +7,10 @@ set args 172.29.2.17 4569
 EOF
 if [ "$1" == "gdb" ]; then
     gnome-terminal -t "client" -x bash -c "gdb ./out/client_bin -x debug.gdb"
+
+elif [ "$1" == "serial" ]; then
+    sudo ./out/client_bin 172.29.2.17 4569
+
 else
     gnome-terminal -t "client" -x bash -c "./out/client_bin 172.29.2.17 4569"
 fi

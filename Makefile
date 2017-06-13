@@ -12,13 +12,14 @@ $(info client_src_dir=$(client_src_dir))
 $(info server_src_dir=$(server_src_dir))
 
 
-common_src:= $(client_src_dir)/cJSON.c
+#common_src:= $(client_src_dir)/cJSON.c
 client_src:= $(client_src_dir)/client.c
 client_src+= $(client_src_dir)/client_handle.c
-client_src+= $(common_src)
+client_src+= $(client_src_dir)/serial.c
+#client_src+= $(common_src)
 
 server_src:= $(server_src_dir)/server.c
-server_src+= $(common_src)
+#server_src+= $(common_src)
 #OBJS    := $(patsubst %.c,$(arm_out_dir)/%.o,$(SOURCES))
 
 #DIR_OBJS        = $(patsubst %.c,%.o,$(SOURCES))
@@ -37,7 +38,10 @@ server_objs_out = $(addprefix $(server_out_dir)/,$(server_objs_name))
 $(info server_objs_out=$(server_objs_out))
 $(info client_objs_out=$(client_objs_out))
 
-CC      := gcc
+#CC      := gcc
+#CC :=/home/sherlock/envtools/Gcc/gcc-arm-none-eabi-6-2017-q1-update/bin/arm-none-eabi-gcc
+#CC :=/home/sherlock/envtools/Gcc/arm-2013.11/bin/arm-none-linux-gnueabi-gcc
+CC :=/home/sherlock/envtools/Gcc/arm-2009q1/bin/arm-none-linux-gnueabi-gcc
 CFLAGS  := -ggdb -Wall -DBUILD_TIME="\"`date`\"" -DDEBUG_
 INCLUDE := -I ./
 LIB     := -lpthread -ldl -lrt -lm

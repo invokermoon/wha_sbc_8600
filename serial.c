@@ -28,8 +28,20 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 */
 #include<stdio.h>
 #include<stdlib.h>
+#include <stddef.h>
+#include <fcntl.h>
+#include <time.h>
 
-#define MSG_COMMON_BYTES	11
+
+#include "client.h"
+
+
+int sfd=0;
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#define BUFFER_SIZE 100
+
+
 #define HEAD_BYTE1_VALUE	0xA5
 #define HEAD_BYTE2_VALUE	0x7f
 #define TAIL_BYTE1_VALUE	0x7f
@@ -52,7 +64,7 @@ typedef struct serial_rsp_msg{
     char ret_num2;
     char floorid;
     char roomid;
-    cmd_type_t cmd_id;
+    char cmd_id;
     char data_len;
     /*these 3 bytes should be parsed in last*/
     char checksum;
@@ -62,6 +74,116 @@ typedef struct serial_rsp_msg{
     char data[0];
 }serial_rsp_msg_t;
 
+enum header_index_e{
+    INDEX_HEAD1=0,
+    INDEX_HEAD2=1,
+    INDEX_FLOORID=2,
+    INDEX_ROOMID=3,
+    INDEX_CMDID=4,
+    INDEX_DATA_LEN=5,
+    INDEX_DATA=6,
+    INDEX_HEADER_SIZE=7,
+};
+
+
+/*return: 0 is invalid ; 1 is valid*/
+int if_sending_vaild(char *buf,unsigned int buf_len)
+{
+    int bytes_read;
+    int i=0;
+    char buffer[BUFFER_SIZE];
+    bytes_read = read(sfd,buffer,BUFFER_SIZE);
+    if ((bytes_read == -1) && (errno != EINTR)) sbc_print("bytes_read %d error\n",bytes_read);
+    else if (bytes_read > 0) {
+	for(i=0;i<buf_len;i++){
+	    if(buffer[i]!=buf[i]){
+		sbc_print("buff[%d]=0x%x,buf[%d]=0x%x\n",i,buffer[i],i,buf[i]);
+		return 0;
+	    }
+	}
+    }
+    return 1;
+}
+
+/*including checksum tail1 and tail2*/
+#define MSG_TAIL_SIZE	3
+
+/*msg protocal
+    char head1;
+    char head2;
+    char floorid;
+    char roomid;
+    char cmd_id;
+    char data_len;
+    char data[0];
+    char checksum;
+    char tail1;
+    char tail2;
+*/
+char *send_serial_msg(char floorid,\
+			char roomid, \
+			cmd_type_t cmd_id, \
+			char *data,  \
+			unsigned int data_len)
+{
+    int i=0,write_size;
+    int rewrite=0;
+
+    pthread_mutex_lock(&mutex);
+    //serial_gpio_config(true);
+
+    unsigned int buf_len=data_len+INDEX_HEADER_SIZE+MSG_TAIL_SIZE;
+    char *buf=malloc(buf_len);
+    buf[INDEX_HEAD1]=HEAD_BYTE1_VALUE;
+    buf[INDEX_HEAD2]=HEAD_BYTE2_VALUE;
+    buf[INDEX_FLOORID]=floorid;
+    buf[INDEX_ROOMID]=roomid;
+    //buf[4]=0x0;
+    //buf[5]=0x0;
+    buf[INDEX_CMDID]=cmd_id;
+    buf[INDEX_DATA_LEN]=data_len;
+    if(data_len>0){
+	memcpy(&buf[INDEX_DATA],data,data_len);
+    }
+    unsigned int checksum=floorid+roomid+cmd_id+data_len;
+    for(i=0;i<data_len;i++){
+	checksum=checksum+buf[INDEX_DATA+i];
+    }
+    checksum=~(checksum&&0xff)+0x01;
+    int tmp_len=INDEX_DATA+data_len;
+    buf[tmp_len]=checksum;
+    buf[tmp_len+1]=TAIL_BYTE1_VALUE;
+    buf[tmp_len+2]=TAIL_BYTE2_VALUE;
+
+    for(i=0;i<buf_len;i++){
+	sbc_print("buf[%d]=%x\n",i,buf[i]);
+    }
+
+__rewrite:
+
+    write_size=write(sfd,buf,buf_len);
+    if(write_size<1){
+	sbc_print("write msg error,write_size=%d\n",write_size);
+	goto __exit;
+    }
+    rewrite++;
+
+    if(!if_sending_vaild(buf,buf_len) && rewrite < 3){
+	srand(buf_len);
+	int sleep_time=(int)rand()%500+1;
+	usleep(sleep_time*1000);
+	goto __rewrite;
+    }
+
+__exit:
+    //serial_gpio_config(false);
+    pthread_mutex_unlock(&mutex);
+    return buf;
+
+
+}
+
+#if 0
 char *send_serial_msg(char floorid,\
 			char roomid, \
 			cmd_type_t cmd_id, \
@@ -69,6 +191,9 @@ char *send_serial_msg(char floorid,\
 			unsigned int data_len)
 {
     int i=0;
+
+    //serial_gpio_config(true);
+
     char *buf=malloc(data_len+MSG_COMMON_BYTES);
     buf[0]=HEAD_BYTE1_VALUE;
     buf[1]=HEAD_BYTE2_VALUE;
@@ -93,12 +218,17 @@ char *send_serial_msg(char floorid,\
     for(i=0;i++;i<data_len+MSG_COMMON_BYTES){
 	sbc_print("buf[%d]=%x\n",i,buf[i]);
     }
+
+    //serial_gpio_config(false);
+
     return buf;
 }
+#endif
 
 serial_rsp_msg_t *parse_recv_msg(char *buf)
 {
     int data_len=buf[7];
+    int i=0;
     serial_rsp_msg_t *data=malloc(sizeof(serial_rsp_msg_t)+data_len);
     data->head1=buf[0];
     data->head2=buf[1];
@@ -125,31 +255,55 @@ serial_rsp_msg_t *parse_recv_msg(char *buf)
 	return NULL;
     }
     if(data_len>0){
-	memcpy(data->data,buf[8],data_len);
+	memcpy(data->data,&buf[8],data_len);
     }
 
     sbc_print("serial_rsp_msg: \nfloorid=0x%x\nroom_id=0x%x\ncmd_id=0x%x\ndata_len=%d\n",\
 	    data->floorid,data->roomid,data->cmd_id,data->data_len);
-    for(i=0;i++;i<data_len){
+    for(i=0;i<data_len;i++){
 	sbc_print("serial_rsp data[%d]=%x\n",i,data->data[i]);
     }
-    return buf;
+    return data;
 }
 
-int serial_init()
+int serial_gpio_config(char flag)
 {
-    int fd,bytes_read;
+    int fd,bytes_write;
 
-    fd = open("/dev/ttyO0", O_RDWR);
+    /*TODO*/
+    fd = open("/sys/XXXXX", O_RDWR);
     if(fd==-1){
-	sbc_print("Open dev error\n");
+	sbc_print("Open sys error\n");
 	return -1;
     }
-    while(bytes_read= read(fd,buffer,BUFFSIZE)){
+    if(flag)
+	bytes_write=write(fd,"1",1);
+    else
+	bytes_write=write(fd,"0",1);
+    if(bytes_write < 1){
+	sbc_print("write flag error,bytes_write=%d\n",bytes_write);
+	return -1;
+    }
+    return 0;
+}
+
+void *serial_init(void *addr)
+{
+    int bytes_read;
+    char buffer[BUFFER_SIZE];
+
+    sfd = open("/dev/ttyS0", O_RDWR);
+    if(sfd==-1){
+	sbc_print("Open dev error\n");
+	return 0;
+    }
+    while( (bytes_read = read(sfd,buffer,BUFFER_SIZE)) ){
 	if ((bytes_read == -1) && (errno != EINTR)) break;
 	else if (bytes_read > 0) {
+	    sbc_print("serial msg:0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n",buffer[0],buffer[1],buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7]);
 	    serial_rsp_msg_t *rsp_msg = parse_recv_msg(buffer);
-	    process(rsp_msg);
+	    /*TODO*/
+	    //process(rsp_msg);
 	    free(rsp_msg);
 	}
     }
