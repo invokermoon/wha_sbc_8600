@@ -31,21 +31,30 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <stddef.h>
 #include <fcntl.h>
 #include <time.h>
-
-
 #include "client.h"
 
 
+#define FILE_TEST
+//#define TESTFILE	"/dev/ttyS0"
+#define TESTFILE	"testfile2"
+
 int sfd=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mutex_ss = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cond=PTHREAD_COND_INITIALIZER;
+static int ThreadsExit=1;
+pthread_t p_tid[2];
+
 
 #define BUFFER_SIZE 100
 
-
-#define HEAD_BYTE1_VALUE	0xA5
+#define HEAD_BYTE1_VALUE	0xa5
 #define HEAD_BYTE2_VALUE	0x7f
 #define TAIL_BYTE1_VALUE	0x7f
 #define TAIL_BYTE2_VALUE	0x5A
+
+/*including checksum tail1 and tail2*/
+#define MSG_TAIL_SIZE	3
 
 typedef enum cmd_type_s{
     CMD_TYPE_CHECK=0x0,
@@ -58,55 +67,82 @@ typedef enum cmd_type_s{
 
 /*serial response message,except for checksum,tail 2 bytes*/
 typedef struct serial_rsp_msg{
-    char head1;
-    char head2;
-    char ret_num1;
-    char ret_num2;
-    char floorid;
-    char roomid;
-    char cmd_id;
-    char data_len;
+    unsigned char head1;
+    unsigned char head2;
+    unsigned char ret_num1;
+    unsigned char ret_num2;
+    unsigned char floorid;
+    unsigned char roomid;
+    unsigned char cmd_id;
+    unsigned char data_len;
     /*these 3 bytes should be parsed in last*/
-    char checksum;
-    char tail1;
-    char tail2;
+    unsigned char checksum;
+    unsigned char tail1;
+    unsigned char tail2;
 
-    char data[0];
+    unsigned char data[0];
 }serial_rsp_msg_t;
 
-enum header_index_e{
-    INDEX_HEAD1=0,
-    INDEX_HEAD2=1,
-    INDEX_FLOORID=2,
-    INDEX_ROOMID=3,
-    INDEX_CMDID=4,
-    INDEX_DATA_LEN=5,
-    INDEX_DATA=6,
-    INDEX_HEADER_SIZE=7,
+enum header_send_index_e{
+    INDEX_SEND_HEAD1=0,
+    INDEX_SEND_HEAD2=1,
+    INDEX_SEND_FLOORID=2,
+    INDEX_SEND_ROOMID=3,
+    INDEX_SEND_CMDID=4,
+    INDEX_SEND_DATA_LEN=5,
+    INDEX_SEND_HEADER_SIZE=6,
+};
+
+enum header_recv_index_e{
+    INDEX_RECV_HEAD1=0,
+    INDEX_RECV_HEAD2=1,
+    INDEX_RECV_RETNUM1=2,
+    INDEX_RECV_RETNUM2=3,
+    INDEX_RECV_FLOORID=4,
+    INDEX_RECV_ROOMID=5,
+    INDEX_RECV_CMDID=6,
+    INDEX_RECV_DATA_LEN=7,
+    INDEX_RECV_HEADER_SIZE=8,
 };
 
 
-/*return: 0 is invalid ; 1 is valid*/
-int if_sending_vaild(char *buf,unsigned int buf_len)
+typedef struct serial_resending_msg_s{
+    int rewrite;
+    int buf_len;
+    unsigned char buf[100];
+    struct list_head list;
+}serial_resending_msg_t;
+
+LIST_HEAD(sending_list);
+
+
+static serial_resending_msg_t *get_first_node(struct list_head *head)
 {
-    int bytes_read;
-    int i=0;
-    char buffer[BUFFER_SIZE];
-    bytes_read = read(sfd,buffer,BUFFER_SIZE);
-    if ((bytes_read == -1) && (errno != EINTR)) sbc_print("bytes_read %d error\n",bytes_read);
-    else if (bytes_read > 0) {
-	for(i=0;i<buf_len;i++){
-	    if(buffer[i]!=buf[i]){
-		sbc_print("buff[%d]=0x%x,buf[%d]=0x%x\n",i,buffer[i],i,buf[i]);
-		return 0;
-	    }
-	}
+    if( (head->next != NULL) && ( !list_empty(head) ) ){
+	return list_entry(head->next,struct serial_resending_msg_s,list);
     }
-    return 1;
+    return NULL;
 }
 
-/*including checksum tail1 and tail2*/
-#define MSG_TAIL_SIZE	3
+static void rm_first_node(struct list_head *head)
+{
+    if( head->next != NULL ){
+	struct serial_resending_msg_s *node = list_entry(head->next,struct serial_resending_msg_s,list);
+	node->rewrite=0;
+	node->buf_len=0;
+	list_del_init(head->next);
+	free(node);
+    }
+}
+
+void print_list()
+{
+    struct list_head *plist,*pnode;
+    list_for_each_safe(plist,pnode,&sending_list){
+	struct serial_resending_msg_s *node = list_entry(plist,struct serial_resending_msg_s,list);
+	sbc_print("List entry:p=%p, buf_len=%d,rewrite=%d\n",node, node->buf_len,node->rewrite);
+    }
+}
 
 /*msg protocal
     char head1;
@@ -120,127 +156,104 @@ int if_sending_vaild(char *buf,unsigned int buf_len)
     char tail1;
     char tail2;
 */
-char *send_serial_msg(char floorid,\
+unsigned char *send_serial_msg(char floorid,\
 			char roomid, \
 			cmd_type_t cmd_id, \
 			char *data,  \
 			unsigned int data_len)
 {
     int i=0,write_size;
-    int rewrite=0;
 
     pthread_mutex_lock(&mutex);
     //serial_gpio_config(true);
 
-    unsigned int buf_len=data_len+INDEX_HEADER_SIZE+MSG_TAIL_SIZE;
-    char *buf=malloc(buf_len);
-    buf[INDEX_HEAD1]=HEAD_BYTE1_VALUE;
-    buf[INDEX_HEAD2]=HEAD_BYTE2_VALUE;
-    buf[INDEX_FLOORID]=floorid;
-    buf[INDEX_ROOMID]=roomid;
-    //buf[4]=0x0;
-    //buf[5]=0x0;
-    buf[INDEX_CMDID]=cmd_id;
-    buf[INDEX_DATA_LEN]=data_len;
-    if(data_len>0){
-	memcpy(&buf[INDEX_DATA],data,data_len);
+    unsigned int buf_len=data_len+INDEX_SEND_HEADER_SIZE+MSG_TAIL_SIZE;
+
+    /*It must use the unsigned char,or >128 will error*/
+    unsigned char *buf=(unsigned char *)malloc(buf_len+2);
+    buf[INDEX_SEND_HEAD1]=HEAD_BYTE1_VALUE;
+    buf[INDEX_SEND_HEAD2]=HEAD_BYTE2_VALUE;
+    buf[INDEX_SEND_FLOORID]=floorid;
+    buf[INDEX_SEND_ROOMID]=roomid;
+    buf[INDEX_SEND_CMDID]=cmd_id;
+    buf[INDEX_SEND_DATA_LEN]=data_len;
+
+    unsigned char checksum=floorid+roomid+cmd_id+data_len;
+    if(data_len>0 && data){
+	memcpy(buf+INDEX_SEND_HEADER_SIZE,data,data_len);
+	for(i=0;i<data_len;i++){
+	    checksum=checksum+buf[INDEX_SEND_HEADER_SIZE+i];
+	}
     }
-    unsigned int checksum=floorid+roomid+cmd_id+data_len;
-    for(i=0;i<data_len;i++){
-	checksum=checksum+buf[INDEX_DATA+i];
-    }
-    checksum=~(checksum&&0xff)+0x01;
-    int tmp_len=INDEX_DATA+data_len;
+    checksum=~(checksum&0xff)+0x01;
+
+    int tmp_len=INDEX_SEND_HEADER_SIZE+data_len;
     buf[tmp_len]=checksum;
     buf[tmp_len+1]=TAIL_BYTE1_VALUE;
     buf[tmp_len+2]=TAIL_BYTE2_VALUE;
 
     for(i=0;i<buf_len;i++){
-	sbc_print("buf[%d]=%x\n",i,buf[i]);
+	blue_print("buf[%d]=0x%x\n",i,buf[i]);
     }
 
-__rewrite:
+    /*back up the sending msg into list*/
+    serial_resending_msg_t *sending_msg=malloc(sizeof(serial_resending_msg_t));
+    sending_msg->buf_len=buf_len;
+    memcpy(sending_msg->buf,buf,buf_len);
+    sending_msg->rewrite=0;
+    list_add(&sending_msg->list,&sending_list);
+    //blue_print("buf_len=%d,sending_msg->len=%d,sending_msg=%p\n",buf_len,sending_msg->buf_len,sending_msg);
+
+    print_list();
 
     write_size=write(sfd,buf,buf_len);
+    write(sfd,buf,buf_len);
     if(write_size<1){
-	sbc_print("write msg error,write_size=%d\n",write_size);
+	blue_print("write msg error,write_size=%d\n",write_size);
 	goto __exit;
     }
-    rewrite++;
 
-    if(!if_sending_vaild(buf,buf_len) && rewrite < 3){
-	srand(buf_len);
-	int sleep_time=(int)rand()%500+1;
-	usleep(sleep_time*1000);
-	goto __rewrite;
-    }
+    blue_print("First write success\n");
 
 __exit:
     //serial_gpio_config(false);
     pthread_mutex_unlock(&mutex);
     return buf;
-
-
 }
 
-#if 0
-char *send_serial_msg(char floorid,\
-			char roomid, \
-			cmd_type_t cmd_id, \
-			char *data,  \
-			unsigned int data_len)
+serial_rsp_msg_t *parse_recv_msg(unsigned char *buf,int buf_len)
 {
+    if(buf_len < INDEX_RECV_HEADER_SIZE){
+	blue_print("The buf length is too short\n");
+	return 0;
+    }
+
+    int data_len=buf[INDEX_RECV_DATA_LEN];
     int i=0;
 
-    //serial_gpio_config(true);
-
-    char *buf=malloc(data_len+MSG_COMMON_BYTES);
-    buf[0]=HEAD_BYTE1_VALUE;
-    buf[1]=HEAD_BYTE2_VALUE;
-    buf[2]=floorid;
-    buf[3]=roomid;
-    //buf[4]=0x0;
-    //buf[5]=0x0;
-    buf[4]=cmd_id;
-    buf[5]=data_len;
-    if(data_len>0){
-	memcpy(&buf[6],data,data_len);
-    }
-    unsigned int checksum=floorid+roomid+cmd_id+data_len;
-    for(i=0;i<data_len;i++){
-	checksum=checksum+buf[6+i];
-    }
-    checksum=~(checksum&&0xff)+0x01;
-    int tmp_len=6+data_len;
-    buf[tmp_len]=checksum;
-    buf[tmp_len+1]=TAIL_BYTE1_VALUE;
-    buf[tmp_len+2]=TAIL_BYTE2_VALUE;
-    for(i=0;i++;i<data_len+MSG_COMMON_BYTES){
-	sbc_print("buf[%d]=%x\n",i,buf[i]);
+    if( data_len > buf_len ){
+	blue_print("The buf length is too long,data_len=%d,buf_len=%d\n",data_len,buf_len);
+	goto __resend;
     }
 
-    //serial_gpio_config(false);
+    /*checking the msg that was sent by us*/
+    if( buf_len == (data_len+INDEX_SEND_HEADER_SIZE+MSG_TAIL_SIZE)){
+	goto __resend;
+    }
 
-    return buf;
-}
-#endif
-
-serial_rsp_msg_t *parse_recv_msg(char *buf)
-{
-    int data_len=buf[7];
-    int i=0;
     serial_rsp_msg_t *data=malloc(sizeof(serial_rsp_msg_t)+data_len);
     data->head1=buf[0];
     data->head2=buf[1];
     data->ret_num1=buf[2];
     data->ret_num2=buf[3];
+
     if(data->head1!=HEAD_BYTE1_VALUE ||data->head2!=HEAD_BYTE2_VALUE ){
-	sbc_print("Head Bytes are error,0x%x,0x%x\n",data->head1,data->head2);
-	return NULL;
+	blue_print("Head Bytes are error,0x%x,0x%x\n",data->head1,data->head2);
+	goto __resend;
     }
     if(data->ret_num1!=0x88||data->ret_num2!=0x88){
-	sbc_print("ret nums are error,0x%x,0x%x\n",data->ret_num1,data->ret_num2);
-	return NULL;
+	blue_print("ret nums are error,0x%x,0x%x\n",data->ret_num1,data->ret_num2);
+	goto __resend;
     }
 
     data->floorid=buf[4];
@@ -251,19 +264,33 @@ serial_rsp_msg_t *parse_recv_msg(char *buf)
     data->tail1=buf[9+data_len];
     data->tail2=buf[10+data_len];
     if(data->tail1!=TAIL_BYTE1_VALUE||data->tail2!=TAIL_BYTE2_VALUE){
-	sbc_print("tails are error,0x%x,0x%x\n",data->tail1,data->tail2);
-	return NULL;
+	blue_print("tails are error,0x%x,0x%x\n",data->tail1,data->tail2);
+	goto __resend;
     }
     if(data_len>0){
 	memcpy(data->data,&buf[8],data_len);
     }
 
-    sbc_print("serial_rsp_msg: \nfloorid=0x%x\nroom_id=0x%x\ncmd_id=0x%x\ndata_len=%d\n",\
+    blue_print("serial_rsp_msg: \nfloorid=0x%x\nroom_id=0x%x\ncmd_id=0x%x\ndata_len=%d\n",\
 	    data->floorid,data->roomid,data->cmd_id,data->data_len);
     for(i=0;i<data_len;i++){
-	sbc_print("serial_rsp data[%d]=%x\n",i,data->data[i]);
+	blue_print("serial_rsp data[%d]=%x\n",i,data->data[i]);
     }
     return data;
+__resend:
+    /*if the msg that was not sent by us,resend*/
+    if( !list_empty(&sending_list) ){
+	serial_resending_msg_t  *msg=get_first_node(&sending_list);
+	if((buf_len >= msg->buf_len) &&  !memcmp(msg->buf,buf,buf_len)){
+	    rm_first_node(&sending_list);
+	    blue_print("send success,no need to resend\n");
+	}else{
+	    msg->rewrite++;
+	    blue_print("not mine msg,send again\n");
+	    pthread_cond_signal(&cond);
+	}
+    }
+    return NULL;
 }
 
 int serial_gpio_config(char flag)
@@ -273,7 +300,7 @@ int serial_gpio_config(char flag)
     /*TODO*/
     fd = open("/sys/XXXXX", O_RDWR);
     if(fd==-1){
-	sbc_print("Open sys error\n");
+	blue_print("Open sys error\n");
 	return -1;
     }
     if(flag)
@@ -281,33 +308,119 @@ int serial_gpio_config(char flag)
     else
 	bytes_write=write(fd,"0",1);
     if(bytes_write < 1){
-	sbc_print("write flag error,bytes_write=%d\n",bytes_write);
+	blue_print("write flag error,bytes_write=%d\n",bytes_write);
 	return -1;
     }
     return 0;
 }
 
-void *serial_init(void *addr)
+void *serial_resend(void *addr)
+{
+    blue_print("Therad init\n");
+    while(1)
+    {
+	pthread_mutex_lock(&mutex_ss);
+	pthread_cond_wait(&cond, &mutex_ss);
+
+	srand(time(0));
+	int sleep_time=(int)(rand()%500+1);
+	usleep(sleep_time*1000);
+	serial_resending_msg_t  *msg=get_first_node(&sending_list);
+	if(msg->buf_len > BUFFER_SIZE){
+	    blue_print("get node error buf_len=%d\n",msg->buf_len);
+	    break;
+	}
+	sbc_color_print(RED,"rewbuf_len=%d,rewrite=%d\n",msg->buf_len,msg->rewrite);
+
+	if(msg->rewrite < 4){
+	    int write_size=write(sfd,msg->buf,msg->buf_len);
+	    if(write_size>INDEX_SEND_HEADER_SIZE){
+		blue_print("resend success,rewrite=%d\n",msg->rewrite);
+	    }else
+		blue_print("resend msg error,write_size=%d,rewrite=%d\n",write_size,msg->rewrite);
+	}
+
+	pthread_mutex_unlock(&mutex_ss);
+    }
+    return 0;
+
+}
+
+void process()
+{
+    /*TODO*/
+    return ;
+}
+
+void *serial_recv(void *addr)
 {
     int bytes_read;
-    char buffer[BUFFER_SIZE];
+    unsigned char buffer[BUFFER_SIZE];
+    sleep(2);
+    blue_print("Therad init\n");
+    int rsfd = open(TESTFILE, O_RDWR|O_CREAT);
+    lseek(rsfd, 0, SEEK_SET);
 
-    sfd = open("/dev/ttyS0", O_RDWR);
-    if(sfd==-1){
-	sbc_print("Open dev error\n");
-	return 0;
-    }
-    while( (bytes_read = read(sfd,buffer,BUFFER_SIZE)) ){
+    while(1){
+#ifdef FILE_TEST
+	bytes_read = read(rsfd,buffer,BUFFER_SIZE);
+#else
+	bytes_read = read(sfd,buffer,BUFFER_SIZE);
+#endif
 	if ((bytes_read == -1) && (errno != EINTR)) break;
 	else if (bytes_read > 0) {
-	    sbc_print("serial msg:0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n",buffer[0],buffer[1],buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7]);
-	    serial_rsp_msg_t *rsp_msg = parse_recv_msg(buffer);
-	    /*TODO*/
-	    //process(rsp_msg);
+	    blue_print("serial msg:0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n",buffer[0],buffer[1],buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7]);
+	    serial_rsp_msg_t *rsp_msg = parse_recv_msg(buffer,bytes_read);
+	    process(rsp_msg);
 	    free(rsp_msg);
 	}
     }
-    sbc_print("Exception,Shut Down\n");
+    close(rsfd);
+    blue_print("Exception,Shut Down\n");
     sleep(1);
+    return 0;
+}
+
+int serial_init(void)
+{
+    int err=0;
+#ifdef FILE_TEST
+    sfd = open(TESTFILE, O_RDWR|O_CREAT);
+    lseek(sfd, 0, SEEK_SET);
+#else
+    sfd = open("/dev/ttyS0", O_RDWR);
+#endif
+    if(sfd==-1){
+	blue_print("Open dev error\n");
+	return 0;
+    }
+
+    /*build the serial resend system*/
+    err = pthread_create(&p_tid[1], NULL, &serial_resend,  (void*)&ThreadsExit);
+    if (err != 0)
+    {
+	blue_print("\ncan't create serial resend thread :[%s]", strerror(err));
+	return 1;
+    }
+    /*build the serial  recv system*/
+    err = pthread_create(&p_tid[0], NULL, &serial_recv,  (void*)&ThreadsExit);
+    if (err != 0)
+    {
+	blue_print("\ncan't create serial recv thread :[%s]", strerror(err));
+	return 1;
+    }
+
+
+    /*test*/
+    send_serial_msg(3,24,0, NULL, 0);
+    sleep(4);
+    send_serial_msg(3,25,0, NULL, 0);
+
+    return 0;
+}
+
+int serial_close(void)
+{
+    close(sfd);
     return 0;
 }

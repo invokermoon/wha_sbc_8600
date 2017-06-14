@@ -62,8 +62,9 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #define YELLOW       "\033[1;33m"
 #define LIGHT_GRAY   "\033[0;37m"
 #define WHITE        "\033[1;37m"
-#define sbc_print(fmt,...) do {  printf(GREEN"[%d][%s]:"NONE fmt,getpid(),__func__,##__VA_ARGS__) ;} while(0)
-#define sbc_color_print(color,fmt,...) do {  printf(GREEN"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
+#define sbc_print(fmt,...) do {  printf(GREEN"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
+#define blue_print(fmt,...) do {  printf(BLUE"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
+#define sbc_color_print(color,fmt,...) do {  printf(color"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
 
 /*IP and port*/
 #define IP_ADDR	"106.14.60.75"
@@ -74,6 +75,11 @@ int sockfd;
 
 #define BUFLEN 300
 
+/*
+ * |: message split symbol
+ * #: attribute symbol
+ * &: arry symbol
+ * */
 /*MSG header and tail*/
 #define MSG_HEADER_STRING	"<<"
 #define MSG_TAIL_STRING		">>"
@@ -100,6 +106,9 @@ int sockfd;
 #define STATUS_FORMAT_FAIL	"71"
 #define STATUS_MSG_INCOMPLETE	"72"
 #define STATUS_INSIDE_ERROR	"73"
+#define STATUS_NOSBC		"74"
+#define STATUS_SBC_OFFLINE	"75"
+#define STATUS_BT_DAMAGE	"76"
 
 /*Common msg header*/
 typedef struct msg_header{
@@ -120,7 +129,7 @@ typedef struct msg_rsp_s{
 
 /*Msg struct :client to server*/
 typedef struct commit_msg_s{
-    char bleMac[17];
+    char Mac[17];
 }commit_msg_t;
 
 typedef struct hb_msg_s{
@@ -160,7 +169,7 @@ typedef struct message_s{
 /****Funcs****/
 char *make_send_msg(char *itype,void *data, unsigned int data_len);
 int sending_response(void *buf,char *status,char *error);
-void *serial_init(void *addr);
+int serial_init(void );
 
 struct handler_driver;
 typedef int (*cmd_scan_f)(void *,unsigned int);

@@ -486,20 +486,7 @@ int main(int argc, char **argv)
 	sbc_print("Begin recv Thread\n");
     }
 
-    /*build the serial  system*/
-    err = pthread_create(&p_tid[2], NULL, &serial_init,  (void*)&ThreadsExit);
-    if (err != 0)
-    {
-	sbc_print("\ncan't create serial thread :[%s]", strerror(err));
-	return 1;
-    }
-    else
-    {
-	sbc_print("Begin serial Thread\n");
-    }
-
-
-
+    serial_init();
 
     while(1){
     _retry:

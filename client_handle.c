@@ -59,7 +59,7 @@ int send_scan(void *buf,unsigned int length)
 int send_commit(void *buf,unsigned int length)
 {
     commit_msg_t data_buf={
-	.bleMac=MAC_ADDRESS,
+	.Mac=MAC_ADDRESS,
     };
     char *data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf,sizeof(commit_msg_t));
     unsigned int wsize=strlen(data);
