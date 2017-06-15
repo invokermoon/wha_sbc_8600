@@ -87,16 +87,26 @@ int sockfd;
 /*
  * interface type:clinet --->server
  * */
-#define ITYPE_COMMITINFO 	"01"
-#define ITYPE_SCAN		"02"
-#define ITYPE_PAIR_OK		"03"
-#define ITYPE_HEARTBEAT		"88"
+#define ITYPE_CS_COMMITINFO 	"01"
+#define ITYPE_CS_SCAN		"02"
+#define ITYPE_CS_PAIR_OK		"03"
+#define ITYPE_CS_HEARTBEAT		"88"
 
 /*interface type:server-->client*/
-#define ITYPE_SETSTATUS	"61"
+#define ITYPE_SC_SETDEV		"61"
+#define ITYPE_SC_RMDEV		"62"
+#define ITYPE_SC_BT_RESTORE	"63"
+#define ITYPE_SC_BT_BACKUP	"64"
+#define ITYPE_SC_BT_QUERY	"65"
 
 /*Mac*/
-#define MAC_ADDRESS	"11:22:33:44:55:66"
+#define MAC_ADDRESS		"12345678"
+#define MAC_ADDRESS__		"12345678|"
+#define BLE_MAC_ADDRESS		"88:22:33:44:55:66"
+#define BLE_MAC_ADDRESS__	"88:22:33:44:55:66|"
+#define PHONE_MAC_ADDRESS	"77:22:33:44:55:66"
+#define PHONE_MAC_ADDRESS__	"77:22:33:44:55:66|"
+
 
 #define MSG_ID		"10000001|"
 #define VERSION		"01|"
@@ -110,6 +120,12 @@ int sockfd;
 #define STATUS_SBC_OFFLINE	"75"
 #define STATUS_BT_DAMAGE	"76"
 
+/*device status*/
+#define DEVICE_STATUS_RECONNECT		"01"
+#define DEVICE_STATUS_READYPAIR 	"02"
+#define DEVICE_STATUS_NOPAIR 		"03"
+#define DEVICE_STATUS_DAMAGE 		"04"
+
 /*Common msg header*/
 typedef struct msg_header{
     char head[2];/*message header string*/
@@ -121,6 +137,7 @@ typedef struct msg_header{
     char device[12+1];
     char data[0];
 }msg_header_t;
+
 /*Common msg rsp*/
 typedef struct msg_rsp_s{
     char status[2+1];
@@ -128,42 +145,62 @@ typedef struct msg_rsp_s{
 }msg_rsp_t;
 
 /*Msg struct :client to server*/
-typedef struct commit_msg_s{
-    char Mac[17];
-}commit_msg_t;
+/*commit cmd*/
+typedef struct cs_commit_msg_s{
+    char Mac[8+1];
+}cs_commit_msg_t;
 
-typedef struct hb_msg_s{
-    char bleMac[17];
-}hb_msg_t;
+typedef struct cs_hb_msg_s{
+    char Mac[8+1];
+}cs_hb_msg_t;
 
-typedef struct scan_msg_s{
-    char gwMac[1+1];
-    char version[1+1];
-    char cmdType[1+1];
-    char bleMac[1+1];
-    char phoneMac[1+1];
-    char timestamp[1];
-}scan_msg_t;
+/*scan cmd*/
+typedef struct cs_scan_msg_s{
+    char Mac[8+1];
+    char roomid[4+1];
+    char bleMac[17+1];
+    char phoneMac[17+1];
+    char timestamp[19+1];
+}cs_scan_msg_t;
 
-typedef struct pair_msg_s{
-    char roomid[1+1];
-    char cmdType[1+1];
-    char bleMac[1+1];
-    char phoneMac[1+1];
-    char timestamp[1];
-}pair_msg_t;
+typedef struct cs_pair_msg_s{
+    char roomid[4+1];
+    char Mac[8+1];
+    char bleMac[17+1];
+    char phoneMac[17+1];
+    char timestamp[19+1];
+}cs_pair_msg_t;
 
 /*Msg struct :server to client*/
-typedef struct device_status_s{
-    char roomid[1+1];
-    char status[1];
-}device_status_t;
+typedef struct sc_dev_status_s{
+    char roomid[4+1];
+    char status[2+1];	/*refer to the macro  DEVICE_STATUS_XXXX*/
+}sc_dev_status_t;
 
-typedef struct message_s{
+typedef struct sc_dev_rm_s{
+    char roomid[4+1];
+}sc_dev_rm_t;
+
+typedef struct sc_bt_restore_s{
+    char roomid[4+1];
+    char backups[64+1];
+}sc_bt_restore_t;
+
+typedef struct sc_bt_backup_s{
+    char roomid[4+1];
+}sc_bt_backup_t;
+
+typedef struct sc_bt_query_s{
+    char roomid[4+1];
+}sc_bt_query_t;
+
+
+/*Node of message*/
+typedef struct message_node_s{
     char one_msg[BUFLEN];
     int valid;
     struct list_head list;
-}message_t;
+}message_node_t;
 
 
 /****Funcs****/
@@ -172,27 +209,39 @@ int sending_response(void *buf,char *status,char *error);
 int serial_init(void );
 
 struct handler_driver;
-typedef int (*cmd_scan_f)(void *,unsigned int);
-typedef int (*cmd_commit_f)(void *,unsigned int);
-typedef int (*cmd_pairok_f)(void *,unsigned int);
-typedef int (*cmd_hb_f)(void *,unsigned int);
-typedef int (*cmd_setting_f)(msg_header_t*,unsigned int);
-typedef int (*rsp_scan_f)(msg_header_t*,unsigned int);
-typedef int (*rsp_commit_f)(msg_header_t*,unsigned int);
-typedef int (*rsp_hb_f)(msg_header_t*,unsigned int);
-typedef int (*rsp_pair_f)(msg_header_t*,unsigned int);
+typedef int (*cs_scan_f)(void *,unsigned int);
+typedef int (*cs_commit_f)(void *,unsigned int);
+typedef int (*cs_pairok_f)(void *,unsigned int);
+typedef int (*cs_hb_f)(void *,unsigned int);
+
+typedef int (*sc_setdev_f)(msg_header_t*,unsigned int);
+typedef int (*sc_rmdev_f)(msg_header_t*,unsigned int);
+typedef int (*sc_bt_restore_f)(msg_header_t*,unsigned int);
+typedef int (*sc_bt_backup_f)(msg_header_t*,unsigned int);
+typedef int (*sc_bt_query_f)(msg_header_t*,unsigned int);
+
+typedef int (*sc_rsp_scan_f)(msg_header_t*,unsigned int);
+typedef int (*sc_rsp_commit_f)(msg_header_t*,unsigned int);
+typedef int (*sc_rsp_hb_f)(msg_header_t*,unsigned int);
+typedef int (*sc_rsp_pair_f)(msg_header_t*,unsigned int);
 
 
 struct handler_funcs {
-	cmd_scan_f send_scan;
-	cmd_commit_f send_commit;
-	cmd_pairok_f send_pair;
-	cmd_hb_f send_hb;
-	cmd_setting_f recv_setting;
-	rsp_scan_f recv_scan_rsp;
-	rsp_commit_f recv_commit_rsp;
-	rsp_pair_f recv_pair_rsp;
-	rsp_hb_f recv_hb_rsp;
+	cs_scan_f cs_scan;
+	cs_commit_f cs_commit;
+	cs_pairok_f cs_pair;
+	cs_hb_f cs_hb;
+
+	sc_setdev_f sc_setdev;
+	sc_rmdev_f sc_rmdev;
+	sc_bt_restore_f sc_bt_restore;
+	sc_bt_backup_f sc_bt_backup;
+	sc_bt_query_f sc_bt_query;
+
+	sc_rsp_scan_f sc_scan_rsp;
+	sc_rsp_commit_f sc_commit_rsp;
+	sc_rsp_pair_f sc_pair_rsp;
+	sc_rsp_hb_f sc_hb_rsp;
 };
 
 struct handler_driver {

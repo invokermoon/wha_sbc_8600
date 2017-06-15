@@ -30,17 +30,17 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include<stdlib.h>
 #include "client.h"
 
-int send_scan(void *buf,unsigned int length)
+int cs_scan(void *buf,unsigned int length)
 {
-    scan_msg_t data_buf={
-	.gwMac="1|",
-	.version="1|",
-	.cmdType="1|",
-	.bleMac="1|",
-	.phoneMac="1|",
-	.timestamp="1",
+    cs_scan_msg_t data_buf={
+	.Mac=MAC_ADDRESS__,
+	.roomid="9999|",
+	.bleMac=BLE_MAC_ADDRESS__,
+	.phoneMac=PHONE_MAC_ADDRESS__,
+	.timestamp="YYYY/MM/DD HH:MM:SS",
     };
-    char *data=(char *)make_send_msg(ITYPE_SCAN,&data_buf,sizeof(scan_msg_t));
+    /*we need ignore the "\0" of timestamp */
+    char *data=(char *)make_send_msg(ITYPE_CS_SCAN,&data_buf,sizeof(cs_scan_msg_t)-1);
 
     unsigned int wsize=strlen(data);
     socklen_t len = send(sockfd,data,wsize,0);
@@ -56,12 +56,12 @@ int send_scan(void *buf,unsigned int length)
     return 0;
 }
 
-int send_commit(void *buf,unsigned int length)
+int cs_commit(void *buf,unsigned int length)
 {
-    commit_msg_t data_buf={
-	.Mac=MAC_ADDRESS,
+    cs_commit_msg_t data_buf={
+	.Mac="12345678",
     };
-    char *data=(char *)make_send_msg(ITYPE_COMMITINFO,&data_buf,sizeof(commit_msg_t));
+    char *data=(char *)make_send_msg(ITYPE_CS_COMMITINFO,&data_buf,sizeof(cs_commit_msg_t)-1);
     unsigned int wsize=strlen(data);
     socklen_t len = send(sockfd,data,wsize,0);
     if(len > 0)
@@ -74,16 +74,16 @@ int send_commit(void *buf,unsigned int length)
     free(data);
     return 0;
 }
-int send_pair(void *buf,unsigned int length)
+int cs_pair(void *buf,unsigned int length)
 {
-    pair_msg_t data_buf={
-	.roomid="1|",
-	.cmdType="1|",
-	.bleMac="1|",
-	.phoneMac="1|",
-	.timestamp="1",
+    cs_pair_msg_t data_buf={
+	.roomid="9999|",
+	.Mac=MAC_ADDRESS__,
+	.bleMac=BLE_MAC_ADDRESS__,
+	.phoneMac=PHONE_MAC_ADDRESS__,
+	.timestamp="YYYY/MM/DD HH:MM:SS",
     };
-    char *data=(char *)make_send_msg(ITYPE_PAIR_OK,&data_buf,sizeof(pair_msg_t));
+    char *data=(char *)make_send_msg(ITYPE_CS_PAIR_OK,&data_buf,sizeof(cs_pair_msg_t)-1);
     unsigned int wsize=strlen(data);
     socklen_t len = send(sockfd,data,wsize,0);
     if(len > 0)
@@ -99,62 +99,83 @@ int send_pair(void *buf,unsigned int length)
     return 0;
 }
 
-#if 0
-int send_heatbeat(void *buf,unsigned int len)
+int sc_setdev(msg_header_t *buf,unsigned int len)
 {
-    return 0;
-}
-#endif
-
-int recv_setting(msg_header_t *buf,unsigned int len)
-{
-    device_status_t *data=(device_status_t *)buf->data;
+    sc_dev_status_t *data=(sc_dev_status_t *)buf->data;
     sbc_print("roomid:%s\n",data->roomid);
     sbc_print("status:%s\n",data->status);
     sending_response(buf,STATUS_FORMAT_FAIL,"error");
     return 0;
 }
 
+int sc_rmdev(msg_header_t *buf,unsigned int len)
+{
+    return 0;
+}
+
+int sc_bt_restore(msg_header_t *buf,unsigned int len)
+{
+    return 0;
+}
+
+int sc_bt_backup(msg_header_t *buf,unsigned int len)
+{
+    return 0;
+}
+
+int sc_bt_query(msg_header_t *buf,unsigned int len)
+{
+    return 0;
+}
+
+
 int commit_rsp(msg_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(commit_msg_t)+1);
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_commit_msg_t));
     sbc_print("Handle the commit rsp status=%s,error=%s\n",rsp->status,rsp->error);
     return 0;
 }
 
 int scan_rsp(msg_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(scan_msg_t)+1);
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_scan_msg_t));
     sbc_print("Handle the scan rsp status=%s,error=%s\n",rsp->status,rsp->error);
     return 0;
 }
 
 int pair_rsp(msg_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(pair_msg_t)+1);
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_pair_msg_t));
     sbc_print("Handle the pair rsp status=%s,error=%s\n",rsp->status,rsp->error);
     return 0;
 }
 
 int hb_rsp(msg_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(hb_msg_t)+1);
-    sbc_print("Handle the hb rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_hb_msg_t));
+    cs_hb_msg_t *hb=(cs_hb_msg_t*)(buf->data);
+    sbc_print("Handle the hb rsp status=%s,error=%s,hb->Mac=%s\n",rsp->status,rsp->error,hb->Mac);
     return 0;
 }
 
 struct handler_driver SBC8600= {
 	.sname = "SBC",
 	.funcs = {
-	    .send_scan=&send_scan,
-	    .send_commit=&send_commit,
-	    .send_pair=&send_pair,
-	    .send_hb=NULL,
-	    .recv_setting=&recv_setting,
-	    .recv_scan_rsp=&scan_rsp,
-	    .recv_commit_rsp=&commit_rsp,
-	    .recv_pair_rsp=&pair_rsp,
-	    .recv_hb_rsp=&hb_rsp,
+	    .cs_scan=&cs_scan,
+	    .cs_commit=&cs_commit,
+	    .cs_pair=&cs_pair,
+	    .cs_hb=NULL,
+
+	    .sc_setdev=&sc_setdev,
+	    .sc_rmdev=&sc_rmdev,
+	    .sc_bt_query=&sc_bt_query,
+	    .sc_bt_restore=&sc_bt_restore,
+	    .sc_bt_backup=&sc_bt_backup,
+
+	    .sc_scan_rsp=&scan_rsp,
+	    .sc_commit_rsp=&commit_rsp,
+	    .sc_pair_rsp=&pair_rsp,
+	    .sc_hb_rsp=&hb_rsp,
 	}
 };
 

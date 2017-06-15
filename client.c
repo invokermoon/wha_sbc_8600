@@ -108,7 +108,7 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     return (char*)header;
 }
 
-int process_device_status(device_status_t *data)
+int process_device_status(sc_dev_status_t *data)
 {
     return 0;
 
@@ -155,14 +155,15 @@ int parse_one_message(char *msg)
     char *tmp_buf=malloc(len+1);
     memset(tmp_buf,0,len+1);
     memcpy(tmp_buf,msg,len);
+
     msg_header_t *header=(msg_header_t*)tmp_buf;
 
     /*remove all the | and << and >>*/
     for(i=0;i<len;i++){
 	if(tmp_buf[i]=='|'){
-	    tmp_buf[i]='\0';
+	    tmp_buf[i]=0;
 	}else if(tmp_buf[i]=='<'){
-	    tmp_buf[i]='\0';
+	    tmp_buf[i]=0;
 	}else if(tmp_buf[i]=='>'){
 	    tmp_buf[i]=0;
 	}
@@ -190,16 +191,31 @@ int parse_one_message(char *msg)
 	return -1;
     }
 
-   if(strncmp(header->itype, ITYPE_COMMITINFO,strlen(ITYPE_COMMITINFO))==0){
-	handler->funcs.recv_commit_rsp(header,0);
-    }else if(strncmp(header->itype, ITYPE_SCAN,strlen(ITYPE_SCAN))==0){
-	handler->funcs.recv_scan_rsp(header,0);
-    }else if(strncmp(header->itype, ITYPE_PAIR_OK,strlen(ITYPE_PAIR_OK))==0){
-	handler->funcs.recv_pair_rsp(header,0);
-    }else if(strncmp(header->itype, ITYPE_HEARTBEAT,strlen(ITYPE_HEARTBEAT))==0){
-	handler->funcs.recv_hb_rsp(header,0);
-    }else if(strncmp(header->itype, ITYPE_SETSTATUS,strlen(ITYPE_SETSTATUS))==0){
-	handler->funcs.recv_setting(header,0);
+   if(strncmp(header->itype, ITYPE_CS_COMMITINFO,strlen(ITYPE_CS_COMMITINFO))==0){
+	handler->funcs.sc_commit_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_CS_SCAN,strlen(ITYPE_CS_SCAN))==0){
+	handler->funcs.sc_scan_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_CS_PAIR_OK,strlen(ITYPE_CS_PAIR_OK))==0){
+	handler->funcs.sc_pair_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_CS_HEARTBEAT,strlen(ITYPE_CS_HEARTBEAT))==0){
+	handler->funcs.sc_hb_rsp(header,0);
+    }else if(strncmp(header->itype, ITYPE_SC_SETDEV,strlen(ITYPE_SC_SETDEV))==0){
+	handler->funcs.sc_setdev(header,0);
+    }else if(strncmp(header->itype, ITYPE_SC_RMDEV,strlen(ITYPE_SC_RMDEV))==0){
+	handler->funcs.sc_rmdev(header,0);
+    }else if(strncmp(header->itype, ITYPE_SC_BT_RESTORE,strlen(ITYPE_SC_BT_RESTORE))==0){
+	handler->funcs.sc_bt_restore(header,0);
+    }else if(strncmp(header->itype, ITYPE_SC_BT_BACKUP,strlen(ITYPE_SC_BT_BACKUP))==0){
+	handler->funcs.sc_bt_backup(header,0);
+    }else if(strncmp(header->itype, ITYPE_SC_BT_QUERY,strlen(ITYPE_SC_BT_QUERY))==0){
+	handler->funcs.sc_bt_query(header,0);
+
+
+
+
+
+
+
     }else{
 	sbc_print("Invalid cmd type =%s\n",header->itype);
     }
@@ -209,10 +225,10 @@ int parse_one_message(char *msg)
 
 void *send_hb(void *addr)
 {
-    hb_msg_t data_buf={
-	.bleMac=MAC_ADDRESS,
+    cs_hb_msg_t data_buf={
+	.Mac=MAC_ADDRESS,
     };
-    char *msg = (char *)make_send_msg(ITYPE_HEARTBEAT,&data_buf,sizeof(hb_msg_t));
+    char *msg = (char *)make_send_msg(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t)-1);
     unsigned int len=strlen(msg);
     while(1){
 	//write(sockfd,pd,sizeof(DATA_PACK));
@@ -223,11 +239,11 @@ void *send_hb(void *addr)
     return NULL;
 }
 
-struct message_s *find_invalid_message()
+struct message_node_s *find_invalid_message()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
-	struct message_s *node = list_entry(plist,struct message_s,list);    
+	struct message_node_s *node = list_entry(plist,struct message_node_s,list);    
 	//sbc_print("Read list =%s\n",node->one_msg);
 	if(node->valid==0){
 	    return node;
@@ -240,7 +256,7 @@ void print_message_list()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
-	struct message_s *node = list_entry(plist,struct message_s,list);    
+	struct message_node_s *node = list_entry(plist,struct message_node_s,list);    
 	sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
     }
 }
@@ -267,8 +283,8 @@ __parse:
      * */
     //sbc_print("hpos=0x%p,tpos=0x%p,spos=0x%p,buf_len=%d\n",hpos,tpos,spos,buf_len);
     if(hpos && tpos && (hpos < tpos)){
-	struct message_s *p=malloc(sizeof(message_t));
-	memset(p,0,sizeof(message_t));
+	struct message_node_s *p=malloc(sizeof(message_node_t));
+	memset(p,0,sizeof(message_node_t));
 	memcpy(p->one_msg,hpos,tpos-hpos+2);
 	p->valid=1;
 	list_add(&p->list, &message_list);
@@ -279,7 +295,7 @@ __parse:
 	}
 
     }else if(!hpos){
-	struct message_s *p=find_invalid_message();
+	struct message_node_s *p=find_invalid_message();
 	if(p && !tpos){
 	    memcpy(p->one_msg+strlen(p->one_msg),spos,buf_len);
 	    p->valid=0;
@@ -290,14 +306,14 @@ __parse:
 
 
     }else if( hpos && !tpos){
-	struct message_s *p=malloc(sizeof(message_t));
-	memset(p,0,sizeof(message_t));
+	struct message_node_s *p=malloc(sizeof(message_node_t));
+	memset(p,0,sizeof(message_node_t));
 	memcpy(p->one_msg,hpos,buf_len);
 	p->valid=0;
 	list_add(&p->list, &message_list);
 
     }else if(hpos && tpos && tpos < hpos){
-	struct message_s *p=find_invalid_message();
+	struct message_node_s *p=find_invalid_message();
 	if(p){
 	    memcpy(p->one_msg+strlen(p->one_msg),spos,tpos-spos+2);
 	    p->valid=1;
@@ -312,7 +328,7 @@ __parse:
 
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
-	struct message_s *node = list_entry(plist,struct message_s,list);    
+	struct message_node_s *node = list_entry(plist,struct message_node_s,list);    
 	//sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
 	if(node->valid){
 	    parse_one_message(node->one_msg);
@@ -515,13 +531,13 @@ int main(int argc, char **argv)
 	}
 #endif
 	if(strncmp(buf,"commit",5)==0){
-	    handler->funcs.send_commit(NULL,0);
+	    handler->funcs.cs_commit(NULL,0);
 	}
 	else if(strncmp("scan",buf,4)==0){
-	    handler->funcs.send_scan(NULL,0);
+	    handler->funcs.cs_scan(NULL,0);
 	}
 	else if(strncmp("pairok",buf,6)==0){
-	    handler->funcs.send_pair(NULL,0);
+	    handler->funcs.cs_pair(NULL,0);
 	}else{
 	    sbc_print("Invalid cmd!\n");
 	    goto _retry;
