@@ -70,12 +70,27 @@ void sig_pipe(int signo)
 char *make_send_msg(char *itype,void *data, unsigned int data_len)
 {
     pthread_mutex_lock(&mutex);
+    int i =0 ;
     char slen[6];
     char iitype[4]={0};
     if(data==NULL||data==0){
 	sbc_print("data is null,make msg fail\n");
 	return NULL;
     }
+
+    /*ignore the '\0' in the end*/
+    if( ((char*)data)[data_len-1] == 0 ){
+	data_len-=1;
+    }
+
+#if 0
+    /*check if there are '\0' in the data*/
+    for(i=0;i<data_len;i++){
+	if( ((char*)data)[i] == 0 ){
+	    ((char*)data)[i] = '$';
+	}
+    }
+#endif
 
     unsigned len = data_len + sizeof(struct msg_header) + strlen(MSG_TAIL_STRING);
 
@@ -100,6 +115,14 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     if((data!=NULL)&&(data_len!=0)){
 	memcpy(header->data,(char*)data,data_len);
     }
+
+    /*check if there are '\0' in the msg*/
+    for(i=0;i<len-1;i++){
+	if( ((char*)header)[i] == 0 ){
+	    ((char*)header)[i] = '$';
+	}
+    }
+
     /*add the tail mask*/
     memcpy(header->data+data_len,MSG_TAIL_STRING,strlen(MSG_TAIL_STRING));
 
@@ -209,13 +232,6 @@ int parse_one_message(char *msg)
 	handler->funcs.sc_bt_backup(header,0);
     }else if(strncmp(header->itype, ITYPE_SC_BT_QUERY,strlen(ITYPE_SC_BT_QUERY))==0){
 	handler->funcs.sc_bt_query(header,0);
-
-
-
-
-
-
-
     }else{
 	sbc_print("Invalid cmd type =%s\n",header->itype);
     }
@@ -228,7 +244,7 @@ void *send_hb(void *addr)
     cs_hb_msg_t data_buf={
 	.Mac=MAC_ADDRESS,
     };
-    char *msg = (char *)make_send_msg(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t)-1);
+    char *msg = (char *)make_send_msg(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t));
     unsigned int len=strlen(msg);
     while(1){
 	//write(sockfd,pd,sizeof(DATA_PACK));
@@ -243,7 +259,7 @@ struct message_node_s *find_invalid_message()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
-	struct message_node_s *node = list_entry(plist,struct message_node_s,list);    
+	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
 	//sbc_print("Read list =%s\n",node->one_msg);
 	if(node->valid==0){
 	    return node;
