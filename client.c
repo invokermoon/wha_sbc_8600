@@ -67,6 +67,19 @@ void sig_pipe(int signo)
     exit(-1);
 }
 
+char *system_timestamp()
+{
+    struct tm *t;
+    time_t tt;
+    static char time_buf[20];
+    memset(time_buf,0,20);
+    time(&tt);
+    t = localtime(&tt);
+
+    sprintf(time_buf,"%4d/%02d/%02d %02d:%02d:%02d", t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+    return time_buf;
+}
+
 char *make_send_msg(char *itype,void *data, unsigned int data_len)
 {
     pthread_mutex_lock(&mutex);
@@ -82,15 +95,6 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     if( ((char*)data)[data_len-1] == 0 ){
 	data_len-=1;
     }
-
-#if 0
-    /*check if there are '\0' in the data*/
-    for(i=0;i<data_len;i++){
-	if( ((char*)data)[i] == 0 ){
-	    ((char*)data)[i] = '$';
-	}
-    }
-#endif
 
     unsigned len = data_len + sizeof(struct msg_header) + strlen(MSG_TAIL_STRING);
 
@@ -131,20 +135,42 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     return (char*)header;
 }
 
+int send_message(char *itype,void *data, unsigned int data_len)
+{
+    char *msg=(char *)make_send_msg(itype,data,data_len);
+
+    unsigned int wsize=strlen(msg);
+    socklen_t len = send(sockfd,msg,wsize,0);
+
+    free(msg);
+    if(len > 0)
+	sbc_print("Send success：%d\n",len);
+    else{
+	sbc_print("Send fail!\n");
+	sleep(1);
+	return -1;
+    }
+    return 0;
+}
+
 int process_device_status(sc_dev_status_t *data)
 {
     return 0;
 
 }
 
-int sending_response(void *buf,char *status,char *error)
+int send_response(void *buf,char *status,char *error)
 {
     unsigned int buf_len=strlen(buf);
     unsigned int error_len=strlen(error);
-    if(error)
+    char slen[8];
+    if(error){
 	error_len=strlen(error);
+    }
 
     unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len;
+    sprintf(slen,"%04d|",len);
+
     char buff[len+2];
     memset(buff,0,len+2);
     if(buf==NULL){
@@ -152,11 +178,22 @@ int sending_response(void *buf,char *status,char *error)
 	return 0;
     }
     memcpy(buff,buf,strlen(buf));
+    /*change the length*/
+    char *len_p=strstr(buff,"|");
+    if(len_p)
+	len_p=strstr(len_p+1,"|");
+    memcpy(len_p+1,slen,4);
+
+    /*remove the end symbol*/
+    char *end_p=strstr(buff,">>");
+    memset(end_p,0,2);
+
     strcat(buff,"|");
     strcat(buff,status);
     strcat(buff,"|");
     strcat(buff,error);
-    sbc_print("rsp msg is: \n%s\n",buff);
+    strcat(buff,MSG_TAIL_STRING);
+    sbc_print("rsp msg is: \n%s\nlen=%d\n",buff,len);
     send(sockfd,buff,len,0);
     return 0;
 }
@@ -194,22 +231,22 @@ int parse_one_message(char *msg)
 
     if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
 	sbc_print("Id is error:%s\n",header->id);
-	//sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	//send_response(msg,STATUS_FORMAT_FAIL,"error");
 	return -1;
     }
     if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
 	sbc_print("version is error:%s\n",header->version);
-	//sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	//send_response(msg,STATUS_FORMAT_FAIL,"error");
 	return -1;
     }
     if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
 	//sbc_print("device is error:%s\n",header->device);
-	sending_response(msg,STATUS_FORMAT_FAIL,"error");
+	//send_response(msg,STATUS_FORMAT_FAIL,"error");
 	return -1;
     }
 
     if(atoi(header->length) != len){
-	//sending_response(msg,STATUS_MSG_INCOMPLETE,"error");
+	//send_response(msg,STATUS_MSG_INCOMPLETE,"error");
 	sbc_print("length is error:%s\n",header->length);
 	return -1;
     }
@@ -241,13 +278,14 @@ int parse_one_message(char *msg)
 
 void *send_hb(void *addr)
 {
+    sbc_print("Thread init\n");
+    sleep(5);
     cs_hb_msg_t data_buf={
 	.Mac=MAC_ADDRESS,
     };
     char *msg = (char *)make_send_msg(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t));
     unsigned int len=strlen(msg);
     while(1){
-	//write(sockfd,pd,sizeof(DATA_PACK));
         send(sockfd,msg,len,0);
 	sleep(30);
     }
@@ -272,7 +310,7 @@ void print_message_list()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
-	struct message_node_s *node = list_entry(plist,struct message_node_s,list);    
+	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
 	sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
     }
 }
@@ -290,7 +328,7 @@ __parse:
     spos=buf;
     hpos = strstr(buf,MSG_HEADER_STRING);
     tpos = strstr(buf,MSG_TAIL_STRING);
-    /*There is must a point that if there is only  "<<", it must be in the first 2 bytes
+    /*There must be a point that if there is only  "<<", it must be in the first 2 bytes
      * Just 4 situations:
      * 1:<<XXXXXXX>> or <<XXXXXXX>><<XXXXXXX****
      * 2:XXXXXXX or XXXXXX>>
@@ -344,7 +382,7 @@ __parse:
 
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
-	struct message_node_s *node = list_entry(plist,struct message_node_s,list);    
+	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
 	//sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
 	if(node->valid){
 	    parse_one_message(node->one_msg);
@@ -362,9 +400,9 @@ __parse:
 
 void *recv_handler(void *addr)
 {
+    sbc_print("Thread init\n");
     while(1){
 	char buf[BUFLEN];
-	/******接收消息*******/
 	bzero(buf,BUFLEN);
 	int len = recv(sockfd,buf,BUFLEN,0);
 	if(len > 0){
@@ -382,67 +420,6 @@ void *recv_handler(void *addr)
     }
     exit(-1);
 }
-/*{{{*/
-#if 0
-static char * makeJson(void)
-{
-    cJSON *pJsonRoot = NULL;
-    cJSON *pSubJson = NULL;
-    cJSON *pSubJsonStatus = NULL;
-    cJSON *pSubJsonData = NULL;
-    char *p = NULL;
-
-    pJsonRoot = cJSON_CreateObject();
-    if(NULL == pJsonRoot)
-    {
-	sbc_print("%s line=%d NULL\n", __func__, __LINE__);
-	return NULL;
-    }
-    cJSON_AddStringToObject(pJsonRoot, "key", "key");
-    cJSON_AddStringToObject(pJsonRoot, "timestamp", "12345");
-    cJSON_AddStringToObject(pJsonRoot, "sign", "sign");
-    cJSON_AddStringToObject(pJsonRoot, "requestParams", "789");
-    //cJSON_AddNumberToObject(pJsonRoot, "number", 10010);
-    //cJSON_AddBoolToObject(pJsonRoot, "bool", 1);
-    pSubJson = cJSON_CreateObject();
-    cJSON_AddItemToObject(pJsonRoot, "body", pSubJson);
-
-    pSubJsonStatus = cJSON_CreateObject();
-    pSubJsonData = cJSON_CreateObject();
-    if(NULL == pSubJsonStatus||NULL==pSubJsonData)
-    {
-	sbc_print("%s line=%d NULL\n", __func__, __LINE__);
-	cJSON_Delete(pJsonRoot);
-	return NULL;
-    }
-    cJSON_AddStringToObject(pSubJsonStatus, "timestatmp", "1234567");
-    cJSON_AddStringToObject(pSubJsonStatus, "gwMac", "1.1.1.1");
-    cJSON_AddStringToObject(pSubJsonStatus, "version", "version1");
-    cJSON_AddStringToObject(pSubJsonData, "cmdType", "type1");
-    cJSON_AddStringToObject(pSubJsonData, "bleMac", "2.2.2.2");
-    cJSON_AddStringToObject(pSubJsonData, "phoneMac", "2.3.3.3");
-    cJSON_AddStringToObject(pSubJsonData, "time", "999999");
-    cJSON_AddItemToObject(pSubJson, "status", pSubJsonStatus);
-    cJSON_AddItemToObject(pSubJson, "Data", pSubJsonData);
-    cJSON_AddStringToObject(pSubJson, "dataType", "datatype1");
-
-    p = cJSON_Print(pJsonRoot);
-    sbc_print("strlen= %d\n", strlen(p));
-
-    if(NULL == p)
-    {
-	sbc_print("%s line=%d NULL\n", __func__, __LINE__);
-	cJSON_Delete(pJsonRoot);
-	return NULL;
-    }
-
-    sbc_print("p = \n%s\n\n", p);
-
-    cJSON_Delete(pJsonRoot);
-
-    return p;
-}
-#endif/*}}}*/
 
 int main(int argc, char **argv)
 {
@@ -452,12 +429,11 @@ int main(int argc, char **argv)
     char buf[BUFLEN];
     char ip_addr[20];
 
-    /*建立socket*/
     if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
-        perror("socket");
-        exit(errno);
+	perror("socket");
+	exit(errno);
     }else
-        sbc_print("socket create success!\n");
+	sbc_print("socket create success!\n");
 
     sighandler_t ret;
     ret = signal(SIGTSTP,sig_pipe);
@@ -467,7 +443,6 @@ int main(int argc, char **argv)
 
     memset(ip_addr,0,sizeof(ip_addr));
     if(argc==3){
-	/*设置服务器端口*/
 	if(argv[2])
 	    port = atoi(argv[2]);
 	else
@@ -479,20 +454,19 @@ int main(int argc, char **argv)
 	memcpy(ip_addr,IP_ADDR,strlen(IP_ADDR));
     }
     sbc_print("IP=%s,port=%d\n",ip_addr,port);
-    /*设置服务器ip*/
+
     bzero(&s_addr, sizeof(s_addr));
     s_addr.sin_family = AF_INET;
     s_addr.sin_port = htons(port);
     if (inet_aton(ip_addr, (struct in_addr *)&s_addr.sin_addr.s_addr) == 0) {
 	perror(ip_addr);
 	exit(errno);
-	}
-    /*开始连接服务器*/
+    }
     if(connect(sockfd,(struct sockaddr*)&s_addr,sizeof(struct sockaddr)) == -1){
-        perror("connect");
-        exit(errno);
+	perror("connect");
+	exit(errno);
     }else
-        sbc_print("conncet success!\n");
+	sbc_print("conncet success!\n");
 
     /*build the heartbeat system*/
     int err = pthread_create(&p_tid[0], NULL, &send_hb,  (void*)&ThreadsExit);
@@ -501,10 +475,8 @@ int main(int argc, char **argv)
 	sbc_print("\ncan't create heartbeat thread :[%s]", strerror(err));
 	return 1;
     }
-    else
-    {
-	sbc_print("Begin heartbeat send Thread\n");
-    }
+
+    usleep(100);
 
     /*build the recv handler system*/
     err = pthread_create(&p_tid[1], NULL, &recv_handler,  (void*)&ThreadsExit);
@@ -513,35 +485,31 @@ int main(int argc, char **argv)
 	sbc_print("\ncan't create recv thread :[%s]", strerror(err));
 	return 1;
     }
-    else
-    {
-	sbc_print("Begin recv Thread\n");
-    }
 
     serial_init();
 
+    usleep(100);
+    /*commit ASAP*/
+    handler->funcs.cs_commit(NULL,0);
+
+    usleep(1000);
     while(1){
-    _retry:
-	sleep(1);
-        /******发送消息*******/
-        bzero(buf,BUFLEN);
-        sbc_print("请输入发送给对方的消息：\n");
-        /*fgets函数：从流中读取BUFLEN-1个字符*/
-        fgets(buf,BUFLEN,stdin);
-        /*打印发送的消息*/
-        //fputs(buf,stdout);
-        if(!strncasecmp(buf,"quit",4)){
-            sbc_print("client 请求终止聊天!\n");
-            break;
-        }
-        /*如果输入的字符串只有"\n"，即回车，那么请重新输入*/
-        if(!strncmp(buf,"\n",1)){
-            sbc_print("输入的字符只有回车，这个是不正确的！！！\n");
-            goto _retry;
-        }
+_retry:
+	bzero(buf,BUFLEN);
+	sbc_print("请输入发送给对方的消息：\n");
+
+	fgets(buf,BUFLEN,stdin);
+	//fputs(buf,stdout);
+	if(!strncasecmp(buf,"quit",4)){
+	    sbc_print("client 请求终止聊天!\n");
+	    break;
+	}
+	if(!strncmp(buf,"\n",1)){
+	    sbc_print("输入的字符只有回车，这个是不正确的！！！\n");
+	    goto _retry;
+	}
 #if 1
-        /*如果buf中含有'\n'，那么要用strlen(buf)-1，去掉'\n'*/
-        if(strchr(buf,'\n')){
+	if(strchr(buf,'\n')){
 	    //memcpy(sbdata->jsdata,buf,strlen(buf)-1);
 	    buf[strlen(buf)-1]=0;
 	}
@@ -558,21 +526,6 @@ int main(int argc, char **argv)
 	    sbc_print("Invalid cmd!\n");
 	    goto _retry;
 	}
-
-#if 0/*{{{*/
-	//char *data;
-	unsigned int wsize=strlen(data);
-	//len = send(sockfd,&sbdata,sizeof(struct sbc_msg),0);
-	len = send(sockfd,data,wsize,0);
-	free(data);
-	if(len > 0)
-            sbc_print("消息发送成功，本次共发送的字节数是：%d\n",len);
-        else{
-            sbc_print("消息发送失败!\n");
-	    sleep(5);
-            break;
-        }
-#endif/*}}}*/
     }
     close(sockfd);
 

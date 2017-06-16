@@ -221,7 +221,7 @@ __exit:
     return buf;
 }
 
-serial_rsp_msg_t *parse_recv_msg(unsigned char *buf,int buf_len)
+serial_rsp_msg_t *serial_parse_msg(unsigned char *buf,int buf_len)
 {
     if(buf_len < INDEX_RECV_HEADER_SIZE){
 	blue_print("The buf length is too short\n");
@@ -346,7 +346,7 @@ void *serial_resend(void *addr)
 
 }
 
-void process()
+void serial_process_recv_msg()
 {
     /*TODO*/
     return ;
@@ -370,14 +370,169 @@ void *serial_recv(void *addr)
 	if ((bytes_read == -1) && (errno != EINTR)) break;
 	else if (bytes_read > 0) {
 	    blue_print("serial msg:0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n",buffer[0],buffer[1],buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7]);
-	    serial_rsp_msg_t *rsp_msg = parse_recv_msg(buffer,bytes_read);
-	    process(rsp_msg);
+	    serial_rsp_msg_t *rsp_msg = serial_parse_msg(buffer,bytes_read);
+	    serial_process_recv_msg(rsp_msg);
 	    free(rsp_msg);
 	}
     }
     close(rsfd);
     blue_print("Exception,Shut Down\n");
     sleep(1);
+    return 0;
+}
+
+int open_serial_port(char *dev)
+{
+    int fd = -1;
+    char *pDev[]={"/dev/ttyS0","/dev/ttyS1"};
+
+    if(dev)
+	fd = open(dev,O_RDWR|O_NOCTTY|O_NDELAY);
+    else
+	fd = open(pDev[0],O_RDWR|O_NOCTTY|O_NDELAY);
+    if( fd<0 )
+    {
+	perror("Can't Open Serial Port !");
+	return (-1);
+    }
+
+    /*reset the serial port as wait status*/
+    if( fcntl(fd,F_SETFL,0)<0 ){
+	printf("fcntl failed !\n");
+	return (-1);
+    }else{
+	printf("fcntl OK = %d !\n",fcntl(fd,F_SETFL,0));
+    }
+
+    /*check the fd is a serial port or not*/
+    if( !isatty(STDIN_FILENO) ){
+	printf("Standard input isn't a terminal device !\n");
+	return (-1);
+    }else{
+	printf("It's a serial terminal device!\n");
+    }
+
+    return fd;
+}
+
+int set_serial_port(int fd,int iBaudRate,int iDataSize,char cParity,int iStopBit)
+{
+    int iResult = 0;
+    struct termios oldtio,newtio;
+
+    iResult = tcgetattr(fd,&oldtio);
+    if( iResult ){
+        perror("Can't get old terminal description !");
+        return (-1);
+    }
+
+    bzero(&newtio,sizeof(newtio));
+    /*ECHO:enable the echo redispaly*/
+    newtio.c_cflag |= CLOCAL | CREAD | ECHO;
+
+    switch( iBaudRate )
+    {
+	case 2400:
+	    cfsetispeed(&newtio,B2400);
+	    cfsetospeed(&newtio,B2400);
+	    break;
+	case 4800:
+	    cfsetispeed(&newtio,B4800);
+	    cfsetospeed(&newtio,B4800);
+	    break;
+	case 9600:
+	    cfsetispeed(&newtio,B9600);
+	    cfsetospeed(&newtio,B9600);
+	    break;
+	case 19200:
+	    cfsetispeed(&newtio,B19200);
+	    cfsetospeed(&newtio,B19200);
+	    break;
+	case 38400:
+	    cfsetispeed(&newtio,B38400);
+	    cfsetospeed(&newtio,B38400);
+	    break;
+	case 57600:
+	    cfsetispeed(&newtio,B57600);
+	    cfsetospeed(&newtio,B57600);
+	    break;
+	case 115200:
+	    cfsetispeed(&newtio,B115200);
+	    cfsetospeed(&newtio,B115200);
+	    break;
+	case 460800:
+	    cfsetispeed(&newtio,B460800);
+	    cfsetospeed(&newtio,B460800);
+	    break;
+	default  :
+	    /*perror("Don't exist iBaudRate !");*/
+	    printf("Don't exist iBaudRate %d !\n",iBaudRate);
+	    return (-1);
+    }
+
+    newtio.c_cflag &= (~CSIZE);
+    switch( iDataSize )
+    {
+	case    7:
+	    newtio.c_cflag |= CS7;
+	    break;
+	case    8:
+	    newtio.c_cflag |= CS8;
+	    break;
+	default:
+	    /*perror("Don't exist iDataSize !");*/
+	    printf("Don't exist iDataSize %d !\n",iDataSize);
+	    return (-1);
+    }
+
+    switch( cParity )
+    {
+	case    'N':                    /*无校验*/
+	    newtio.c_cflag &= (~PARENB);
+	    break;
+	case    'O':                    /*奇校验*/
+	    newtio.c_cflag |= PARENB;
+	    newtio.c_cflag |= PARODD;
+	    newtio.c_iflag |= (INPCK | ISTRIP);
+	    break;
+	case    'E':                    /*偶校验*/
+	    newtio.c_cflag |= PARENB;
+	    newtio.c_cflag &= (~PARODD);
+	    newtio.c_iflag |= (INPCK | ISTRIP);
+	    break;
+	default:
+	    /*perror("Don't exist cParity  !");*/
+	    printf("Don't exist cParity %c !\n",cParity);
+	    return (-1);
+    }
+
+    switch( iStopBit )
+    {
+	case    1:
+	    newtio.c_cflag &= (~CSTOPB);
+	    break;
+	case    2:
+	    newtio.c_cflag |= CSTOPB;
+	    break;
+	default:
+	    /*perror("Don't exist iStopBit !");*/
+	    printf("Don't exist iStopBit %d !\n",iStopBit);
+	    return (-1);
+    }
+
+    newtio.c_cc[VTIME] = 0; /*setiing wait time*/
+    newtio.c_cc[VMIN] = 0;  /*setting minor char*/
+    tcflush(fd,TCIFLUSH);       /*refresh input queue (TCIOFLUSH:flush input and output)*/
+    iResult = tcsetattr(fd,TCSANOW,&newtio);    /*enable new config*/
+
+    if( iResult )
+    {
+	perror("Set new terminal description error !");
+	return (-1);
+    }
+
+    printf("set serial port success !\n");
+
     return 0;
 }
 
@@ -388,13 +543,15 @@ int serial_init(void)
     sfd = open(TESTFILE, O_RDWR|O_CREAT);
     lseek(sfd, 0, SEEK_SET);
 #else
-    sfd = open("/dev/ttyS0", O_RDWR);
+    sfd = open_serial_port("/dev/ttyS0");
+    set_serial_port(sfd,115200,8,'N',1);
 #endif
     if(sfd==-1){
 	blue_print("Open dev error\n");
 	return 0;
     }
 
+    usleep(100);
     /*build the serial resend system*/
     err = pthread_create(&p_tid[1], NULL, &serial_resend,  (void*)&ThreadsExit);
     if (err != 0)
@@ -402,6 +559,7 @@ int serial_init(void)
 	blue_print("\ncan't create serial resend thread :[%s]", strerror(err));
 	return 1;
     }
+    usleep(100);
     /*build the serial  recv system*/
     err = pthread_create(&p_tid[0], NULL, &serial_recv,  (void*)&ThreadsExit);
     if (err != 0)
@@ -409,7 +567,6 @@ int serial_init(void)
 	blue_print("\ncan't create serial recv thread :[%s]", strerror(err));
 	return 1;
     }
-
 
     /*test*/
     send_serial_msg(3,24,0, NULL, 0);

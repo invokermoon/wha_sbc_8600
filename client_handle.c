@@ -37,21 +37,10 @@ int cs_scan(void *buf,unsigned int length)
 	.roomid="9999|",
 	.bleMac=BLE_MAC_ADDRESS__,
 	.phoneMac=PHONE_MAC_ADDRESS__,
-	.timestamp="YYYY/MM/DD HH:MM:SS",
     };
+    memcpy(data_buf.timestamp,system_timestamp(),sizeof(data_buf.timestamp));
     /*we need ignore the "\0" of timestamp */
-    char *data=(char *)make_send_msg(ITYPE_CS_SCAN,&data_buf,sizeof(cs_scan_msg_t)-1);
-
-    unsigned int wsize=strlen(data);
-    socklen_t len = send(sockfd,data,wsize,0);
-    if(len > 0)
-	sbc_print("Send success：%d\n",len);
-    else{
-	sbc_print("Send fail!\n");
-	sleep(1);
-    }
-
-    free(data);
+    send_message(ITYPE_CS_SCAN,&data_buf,sizeof(cs_scan_msg_t)-1);
 
     return 0;
 }
@@ -61,17 +50,7 @@ int cs_commit(void *buf,unsigned int length)
     cs_commit_msg_t data_buf={
 	.Mac="12345678",
     };
-    char *data=(char *)make_send_msg(ITYPE_CS_COMMITINFO,&data_buf,sizeof(cs_commit_msg_t)-1);
-    unsigned int wsize=strlen(data);
-    socklen_t len = send(sockfd,data,wsize,0);
-    if(len > 0)
-	sbc_print("Send success：%d\n",len);
-    else{
-	sbc_print("Send fail!\n");
-	sleep(1);
-    }
-
-    free(data);
+    send_message(ITYPE_CS_COMMITINFO,&data_buf,sizeof(cs_commit_msg_t)-1);
     return 0;
 }
 int cs_pair(void *buf,unsigned int length)
@@ -81,20 +60,9 @@ int cs_pair(void *buf,unsigned int length)
 	.Mac=MAC_ADDRESS__,
 	.bleMac=BLE_MAC_ADDRESS__,
 	.phoneMac=PHONE_MAC_ADDRESS__,
-	.timestamp="YYYY/MM/DD HH:MM:SS",
     };
-    char *data=(char *)make_send_msg(ITYPE_CS_PAIR_OK,&data_buf,sizeof(cs_pair_msg_t)-1);
-    unsigned int wsize=strlen(data);
-    socklen_t len = send(sockfd,data,wsize,0);
-    if(len > 0)
-	sbc_print("Send success：%d\n",len);
-    else{
-	sbc_print("Send fail!\n");
-	sleep(1);
-    }
-
-
-    free(data);
+    memcpy(data_buf.timestamp,system_timestamp(),sizeof(data_buf.timestamp));
+    send_message(ITYPE_CS_PAIR_OK,&data_buf,sizeof(cs_pair_msg_t)-1);
 
     return 0;
 }
@@ -104,7 +72,7 @@ int sc_setdev(msg_header_t *buf,unsigned int len)
     sc_dev_status_t *data=(sc_dev_status_t *)buf->data;
     sbc_print("roomid:%s\n",data->roomid);
     sbc_print("status:%s\n",data->status);
-    sending_response(buf,STATUS_FORMAT_FAIL,"error");
+    send_response(buf,STATUS_FORMAT_FAIL,"error");
     return 0;
 }
 

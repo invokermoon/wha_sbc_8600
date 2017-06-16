@@ -41,6 +41,7 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <signal.h>
 #include <sys/mman.h>
 #include <termios.h>
+#include <time.h>  
 #include "cJSON.h"
 #include "list.h"
 
@@ -205,8 +206,10 @@ typedef struct message_node_s{
 
 /****Funcs****/
 char *make_send_msg(char *itype,void *data, unsigned int data_len);
-int sending_response(void *buf,char *status,char *error);
+int send_message(char *itype,void *data, unsigned int data_len);
+int send_response(void *buf,char *status,char *error);
 int serial_init(void );
+char *system_timestamp();
 
 struct handler_driver;
 typedef int (*cs_scan_f)(void *,unsigned int);
