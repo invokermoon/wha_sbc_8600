@@ -1,16 +1,18 @@
-client_src_dir :=$(PWD)
-server_src_dir :=$(PWD)
-client_out_dir :=$(PWD)/out/client
-server_out_dir :=$(PWD)/out/server
+cur_dir :=$(PWD)
 
-out_dir :=$(PWD)/out
+client_src_dir :=$(cur_dir)/src
+server_src_dir :=$(cur_dir)/src
+client_out_dir :=$(cur_dir)/out/client
+server_out_dir :=$(cur_dir)/out/server
+
+
+out_dir :=$(cur_dir)/out
 client := $(out_dir)/client_bin
 server := $(out_dir)/server_bin
 
 
 $(info client_src_dir=$(client_src_dir))
 $(info server_src_dir=$(server_src_dir))
-
 
 #common_src:= $(client_src_dir)/cJSON.c
 client_src:= $(client_src_dir)/client.c
@@ -24,7 +26,7 @@ server_src:= $(server_src_dir)/server.c
 
 #DIR_OBJS        = $(patsubst %.c,%.o,$(SOURCES))
 #OBJS_NAME        = $(notdir $(patsubst %.c,%.o,$(SOURCES)))
-#OBJS          = $(addprefix $(arm_out_dir)/,$(notdir $(patsubst %.c,%.o,$(SOURCES)))) 
+#OBJS          = $(addprefix $(arm_out_dir)/,$(notdir $(patsubst %.c,%.o,$(SOURCES))))
 
 client_objs = $(patsubst %.c,%.o,$(client_src))
 client_objs_name = $(notdir $(patsubst %.c,%.o,$(client_src)))
@@ -35,6 +37,7 @@ server_objs_name = $(notdir $(patsubst %.c,%.o,$(server_src)))
 server_objs_out = $(addprefix $(server_out_dir)/,$(server_objs_name))
 
 
+
 $(info server_objs_out=$(server_objs_out))
 $(info client_objs_out=$(client_objs_out))
 
@@ -43,7 +46,7 @@ $(info client_objs_out=$(client_objs_out))
 #CC :=/home/sherlock/envtools/Gcc/arm-2013.11/bin/arm-none-linux-gnueabi-gcc
 CC :=/home/sherlock/envtools/Gcc/arm-2009q1/bin/arm-none-linux-gnueabi-gcc
 CFLAGS  := -ggdb -Wall -DBUILD_TIME="\"`date`\"" -DDEBUG_
-INCLUDE := -I ./
+INCLUDE := -I ./include
 LIB     := -lpthread -ldl -lrt -lm
 
 .PHONY: clean all
@@ -56,14 +59,14 @@ all:$(client) $(server)
 $(client):$(client_objs_out)
 	$(CC) -o $@ $^ $(LIB)
 
-$(client_objs_out):$(client_out_dir)/%.o:%.c
+$(client_objs_out):$(client_out_dir)/%.o:$(client_src_dir)/%.c
 	mkdir -p $(client_out_dir)
 	$(CC) -o $@ -c $< $(CFLAGS) $(INCLUDE)
 
 $(server):$(server_objs_out)
 	    $(CC) -o $@ $^ $(LIB)
 
-$(server_objs_out):$(server_out_dir)/%.o:%.c
+$(server_objs_out):$(server_out_dir)/%.o:$(client_src_dir)/%.c
 	mkdir -p $(server_out_dir)
 	$(CC) -o $@ -c $< $(CFLAGS) $(INCLUDE)
 
