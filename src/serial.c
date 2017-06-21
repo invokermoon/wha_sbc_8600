@@ -34,13 +34,15 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include "client.h"
 
 
-#define FILE_TEST
 //#define TESTFILE	"/dev/ttyS0"
-#define TESTFILE	"testfile2"
+#define SERIAL_PORT	"/dev/ttyO1"
 
 int sfd=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mutex_ss = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mutex_recv = PTHREAD_MUTEX_INITIALIZER;
+
+
 static pthread_cond_t cond=PTHREAD_COND_INITIALIZER;
 static int ThreadsExit=1;
 pthread_t p_tid[2];
@@ -48,9 +50,9 @@ pthread_t p_tid[2];
 
 #define BUFFER_SIZE 100
 
-#define HEAD_BYTE1_VALUE	0xa5
-#define HEAD_BYTE2_VALUE	0x7f
-#define TAIL_BYTE1_VALUE	0x7f
+#define HEAD_BYTE1_VALUE	0xA5
+#define HEAD_BYTE2_VALUE	0x7F
+#define TAIL_BYTE1_VALUE	0xF7
 #define TAIL_BYTE2_VALUE	0x5A
 
 /*including checksum tail1 and tail2*/
@@ -105,21 +107,30 @@ enum header_recv_index_e{
     INDEX_RECV_HEADER_SIZE=8,
 };
 
-
-typedef struct serial_resending_msg_s{
+typedef struct serial_resend_msg_s{
     int rewrite;
     int buf_len;
     unsigned char buf[100];
     struct list_head list;
-}serial_resending_msg_t;
+}serial_resend_msg_t;
 
 LIST_HEAD(sending_list);
 
+/*Node of serial message*/
+typedef struct serial_recv_node_s{
+    unsigned char one_msg[BUFLEN];
+    int valid_len;
+    int valid;
+    struct list_head list;
+}serial_recv_node_t;
 
-static serial_resending_msg_t *get_first_node(struct list_head *head)
+LIST_HEAD(serial_recv_list);
+
+
+static serial_resend_msg_t *get_first_node(struct list_head *head)
 {
     if( (head->next != NULL) && ( !list_empty(head) ) ){
-	return list_entry(head->next,struct serial_resending_msg_s,list);
+	return list_entry(head->next,struct serial_resend_msg_s,list);
     }
     return NULL;
 }
@@ -127,7 +138,7 @@ static serial_resending_msg_t *get_first_node(struct list_head *head)
 static void rm_first_node(struct list_head *head)
 {
     if( head->next != NULL ){
-	struct serial_resending_msg_s *node = list_entry(head->next,struct serial_resending_msg_s,list);
+	struct serial_resend_msg_s *node = list_entry(head->next,struct serial_resend_msg_s,list);
 	node->rewrite=0;
 	node->buf_len=0;
 	list_del_init(head->next);
@@ -139,8 +150,8 @@ void print_list()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&sending_list){
-	struct serial_resending_msg_s *node = list_entry(plist,struct serial_resending_msg_s,list);
-	sbc_print("List entry:p=%p, buf_len=%d,rewrite=%d\n",node, node->buf_len,node->rewrite);
+	struct serial_resend_msg_s *node = list_entry(plist,struct serial_resend_msg_s,list);
+	sbc_color_print(RED,"List entry:p=%p, buf_len=%d,rewrite=%d\n",node, node->buf_len,node->rewrite);
     }
 }
 
@@ -186,6 +197,8 @@ unsigned char *send_serial_msg(char floorid,\
 	}
     }
     checksum=~(checksum&0xff)+0x01;
+    //TODO
+    checksum=0;
 
     int tmp_len=INDEX_SEND_HEADER_SIZE+data_len;
     buf[tmp_len]=checksum;
@@ -197,7 +210,7 @@ unsigned char *send_serial_msg(char floorid,\
     }
 
     /*back up the sending msg into list*/
-    serial_resending_msg_t *sending_msg=malloc(sizeof(serial_resending_msg_t));
+    serial_resend_msg_t *sending_msg=malloc(sizeof(serial_resend_msg_t));
     sending_msg->buf_len=buf_len;
     memcpy(sending_msg->buf,buf,buf_len);
     sending_msg->rewrite=0;
@@ -207,13 +220,13 @@ unsigned char *send_serial_msg(char floorid,\
     print_list();
 
     write_size=write(sfd,buf,buf_len);
-    write(sfd,buf,buf_len);
+
     if(write_size<1){
 	blue_print("write msg error,write_size=%d\n",write_size);
 	goto __exit;
     }
 
-    blue_print("First write success\n");
+    blue_print("First write success,write_size=%d\n",write_size);
 
 __exit:
     //serial_gpio_config(false);
@@ -221,18 +234,26 @@ __exit:
     return buf;
 }
 
-serial_rsp_msg_t *serial_parse_msg(unsigned char *buf,int buf_len)
+serial_rsp_msg_t *serial_parse_one_message(unsigned char *buf,int buf_len)
 {
+    int i=0;
     if(buf_len < INDEX_RECV_HEADER_SIZE){
 	blue_print("The buf length is too short\n");
 	return 0;
     }
 
+#if 1
+    printf(RED"[%s]",__func__);
+    for(i=0;i<buf_len;i++){
+	printf(BLUE"bytes[%d]=%x ",i,buf[i]);
+    }
+    printf(NONE"\n");
+#endif
+
     int data_len=buf[INDEX_RECV_DATA_LEN];
-    int i=0;
 
     if( data_len > buf_len ){
-	blue_print("The buf length is too long,data_len=%d,buf_len=%d\n",data_len,buf_len);
+	blue_print("Length is error,maybe sent by ourself data_len=%d,buf_len=%d\n",data_len,buf_len);
 	goto __resend;
     }
 
@@ -280,13 +301,13 @@ serial_rsp_msg_t *serial_parse_msg(unsigned char *buf,int buf_len)
 __resend:
     /*if the msg that was not sent by us,resend*/
     if( !list_empty(&sending_list) ){
-	serial_resending_msg_t  *msg=get_first_node(&sending_list);
+	serial_resend_msg_t  *msg=get_first_node(&sending_list);
 	if((buf_len >= msg->buf_len) &&  !memcmp(msg->buf,buf,buf_len)){
 	    rm_first_node(&sending_list);
-	    blue_print("send success,no need to resend\n");
+	    blue_print("[Resend]send success,no need to resend\n");
 	}else{
 	    msg->rewrite++;
-	    blue_print("not mine msg,send again\n");
+	    blue_print("[Resend]not mine msg,send again\n");
 	    pthread_cond_signal(&cond);
 	}
     }
@@ -325,7 +346,7 @@ void *serial_resend(void *addr)
 	srand(time(0));
 	int sleep_time=(int)(rand()%500+1);
 	usleep(sleep_time*1000);
-	serial_resending_msg_t  *msg=get_first_node(&sending_list);
+	serial_resend_msg_t  *msg=get_first_node(&sending_list);
 	if(msg->buf_len > BUFFER_SIZE){
 	    blue_print("get node error buf_len=%d\n",msg->buf_len);
 	    break;
@@ -346,19 +367,205 @@ void *serial_resend(void *addr)
 
 }
 
-void serial_process_recv_msg()
+void serial_process_recv_msg(serial_rsp_msg_t *rsp_msg)
 {
     /*TODO*/
+    if (rsp_msg->cmd_id == 3){
+	char room[6];
+	sprintf(room,"%02d%02d|",rsp_msg->floorid,rsp_msg->roomid);
+	handler->funcs.cs_pair(room,strlen(room));
+    }
+
     return ;
 }
+
+#if 1
+static struct serial_recv_node_s *find_invalid_node()
+{
+    struct list_head *plist,*pnode;
+    list_for_each_safe(plist,pnode,&serial_recv_list){
+	struct serial_recv_node_s *node = list_entry(plist,struct serial_recv_node_s,list);
+	//sbc_print("Read list =%s\n",node->one_msg);
+	if(node && node->valid==0){
+	    return node;
+	}
+    }
+    return NULL;
+}
+
+static void print_node_list()
+{
+    struct list_head *plist,*pnode;
+    int i=0;
+    sbc_color_print(RED,"Print List\n");
+    list_for_each_safe(plist,pnode,&serial_recv_list){
+	struct serial_recv_node_s *node = list_entry(plist,struct serial_recv_node_s,list);
+	//sbc_print("line=%d,plist=%p,node->list=%p,plist->prev=%p,plist->next=%p\n",__LINE__,plist,&node->list,plist->prev,plist->next);
+	if(node){
+	    sbc_color_print(RED,"valid=%d,valid_len=%d:",node->valid,node->valid_len);
+	    for(i=0;i<node->valid_len;i++) printf("[%d]=0x%x ",i,node->one_msg[i]);
+	    printf("\n");
+	}
+    }
+}
+
+unsigned char *find_headbytes_pointer(unsigned char *buf,int buf_len)
+{
+    unsigned char *hpos=NULL;
+    int i=0;
+    for(i=0;i<buf_len-1;i++){
+	if( (buf[i] == HEAD_BYTE1_VALUE) && (buf[i+1] == HEAD_BYTE2_VALUE) ){
+	    hpos = &buf[i];
+	    return hpos;
+	}
+    }
+    return NULL;
+}
+
+unsigned char *find_tailbytes_pointer(unsigned char *buf,int buf_len)
+{
+    unsigned char *tpos=NULL;
+    int i=0;
+    for(i=0;i<buf_len-1;i++){
+	if( (buf[i] == TAIL_BYTE1_VALUE ) && (buf[i+1] == TAIL_BYTE2_VALUE) ){
+	    tpos = &buf[i];
+	    return tpos;
+	}
+    }
+    return NULL;
+}
+
+enum which_first_e {
+    FOUND_NONE_FIRST=0,
+    FOUND_HEAD_FIRST=1,
+    FOUND_TAIL_FIRST=2,
+};
+static enum which_first_e head_tail_which_first(unsigned char *buf,int buf_len)
+{
+    int i=0;
+    for(i=0;i<buf_len-1;i++){
+	if( (buf[i] == HEAD_BYTE1_VALUE) && (buf[i+1] == HEAD_BYTE2_VALUE) ){
+	    return FOUND_HEAD_FIRST;
+	}
+	if( (buf[i] == TAIL_BYTE1_VALUE ) && (buf[i+1] == TAIL_BYTE2_VALUE) ){
+	    return FOUND_TAIL_FIRST;
+	}
+    }
+    return FOUND_NONE_FIRST;
+}
+
+
+int serial_parse_messages(unsigned char *buf,int unparsed_buf_len)
+{
+    pthread_mutex_lock(&mutex_recv);
+
+    unsigned char *spos=NULL;
+    unsigned char *hpos=NULL;
+    unsigned char *tpos=NULL;
+    int used_len = 0;
+
+__parse:
+    spos=buf;
+    hpos=find_headbytes_pointer(buf,unparsed_buf_len);
+    tpos=find_tailbytes_pointer(buf,unparsed_buf_len);
+    enum which_first_e which_1st=head_tail_which_first(buf,unparsed_buf_len);
+
+    struct serial_recv_node_s *invaild_node=find_invalid_node();
+
+    //blue_print("hpos=0x%p,tpos=0x%p,spos=0x%p,unparsed_buf_len=%d\n",hpos,tpos,spos,unparsed_buf_len);
+    if( which_1st == FOUND_HEAD_FIRST  ){
+	if(invaild_node){
+	    /*remove old rubish data*/
+	    list_del_init(&(invaild_node->list));
+	}
+	struct serial_recv_node_s *p=malloc(sizeof(serial_recv_node_t));
+	memset(p,0,sizeof(serial_recv_node_t));
+	if( tpos ){
+	    used_len=tpos-hpos+2;
+	    memcpy(p->one_msg,hpos,used_len);
+	    p->valid=1;
+	    p->valid_len=used_len;
+	    list_add(&(p->list), &serial_recv_list);
+
+	    if( unparsed_buf_len > used_len ){
+		buf=tpos+2;
+		unparsed_buf_len -=used_len;
+		goto __parse;
+	    }
+	}else{
+	    int useless_size=hpos-spos;
+	    used_len=unparsed_buf_len-useless_size;
+	    memcpy(p->one_msg,hpos,used_len);
+	    p->valid=0;
+	    p->valid_len=used_len;
+	    list_add(&(p->list), &serial_recv_list);
+	}
+    }else if( which_1st == FOUND_NONE_FIRST){
+	if(invaild_node){
+	    if( ( invaild_node->valid_len + unparsed_buf_len) > BUFLEN ){
+		sbc_color_print(RED,"message len is too long, discard it\n");
+		list_del_init(&(invaild_node->list));
+		return 0;
+	    }
+	    used_len = unparsed_buf_len;
+	    memcpy(&(invaild_node->one_msg[invaild_node->valid_len]),spos,used_len);
+	    invaild_node->valid=0;
+	    invaild_node->valid_len+=used_len;
+	}else{
+	    /*Do nothing,just ignore it*/
+	}
+
+    }else if( which_1st == FOUND_TAIL_FIRST ){
+	used_len = tpos-spos+2;
+	if(invaild_node){
+	    memcpy(&(invaild_node->one_msg[invaild_node->valid_len]),spos,used_len);
+	    invaild_node->valid_len+=used_len;
+	    invaild_node->valid=1;
+	}
+	/*transfer to other situation*/
+	if( unparsed_buf_len > used_len ){
+	    buf=tpos+2;
+	    unparsed_buf_len-=used_len;
+	    goto __parse;
+	}
+
+    }
+
+    //print_node_list();
+
+    struct list_head *plist,*pnode;
+    list_for_each_safe(plist,pnode,&serial_recv_list){
+	struct serial_recv_node_s *node = list_entry(plist,struct serial_recv_node_s,list);
+	//sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
+	if(node && node->valid){
+	    serial_rsp_msg_t *rsp_msg = serial_parse_one_message(node->one_msg,node->valid_len);
+	    if(rsp_msg){
+		serial_process_recv_msg(rsp_msg);
+		free(rsp_msg);
+	    }
+	    list_del_init(plist);
+	    free(node);
+	}
+    }
+
+    //print_node_list();
+
+    pthread_mutex_unlock(&mutex_recv);
+    return 0;
+}
+
+#endif
+
+
 
 void *serial_recv(void *addr)
 {
     int bytes_read;
+    int i=0;
     unsigned char buffer[BUFFER_SIZE];
     sleep(2);
     blue_print("Therad init\n");
-    int rsfd = open(TESTFILE, O_RDWR|O_CREAT);
+    int rsfd = open(SERIAL_PORT, O_RDWR|O_CREAT);
     lseek(rsfd, 0, SEEK_SET);
 
     while(1){
@@ -367,12 +574,18 @@ void *serial_recv(void *addr)
 #else
 	bytes_read = read(sfd,buffer,BUFFER_SIZE);
 #endif
-	if ((bytes_read == -1) && (errno != EINTR)) break;
-	else if (bytes_read > 0) {
-	    blue_print("serial msg:0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x,0x%x\n",buffer[0],buffer[1],buffer[2],buffer[3],buffer[4],buffer[5],buffer[6],buffer[7]);
-	    serial_rsp_msg_t *rsp_msg = serial_parse_msg(buffer,bytes_read);
-	    serial_process_recv_msg(rsp_msg);
+	if ((bytes_read == -1) && (errno != EINTR)){
+	    blue_print("Reading none,break\n");
+	    break;
+	}else if (bytes_read > 0) {
+	    for(i=0;i<bytes_read;i++) blue_print("serial msg:bytes_read[%d]=0x%x\n",i,buffer[i]);
+	    serial_parse_messages(buffer,bytes_read);
+#if 0
+	    serial_rsp_msg_t *rsp_msg = serial_parse_one_message(buffer,bytes_read);
+	    if(rsp_msg)
+		serial_process_recv_msg(rsp_msg);
 	    free(rsp_msg);
+#endif
 	}
     }
     close(rsfd);
@@ -390,11 +603,11 @@ int open_serial_port(char *dev)
 	fd = open(dev,O_RDWR|O_NOCTTY|O_NDELAY);
     else
 	fd = open(pDev[0],O_RDWR|O_NOCTTY|O_NDELAY);
-    if( fd<0 )
-    {
+    if( fd<0 ){
 	perror("Can't Open Serial Port !");
 	return (-1);
-    }
+    }else
+	sbc_color_print(RED,"Open serial port %s succuss\n",dev);
 
     /*reset the serial port as wait status*/
     if( fcntl(fd,F_SETFL,0)<0 ){
@@ -540,11 +753,13 @@ int serial_init(void)
 {
     int err=0;
 #ifdef FILE_TEST
-    sfd = open(TESTFILE, O_RDWR|O_CREAT);
+    sfd = open(SERIAL_PORT, O_RDWR|O_CREAT);
     lseek(sfd, 0, SEEK_SET);
+    blue_print("FILETEST OPEN...\n");
 #else
-    sfd = open_serial_port("/dev/ttyS0");
-    set_serial_port(sfd,115200,8,'N',1);
+    sfd = open_serial_port(SERIAL_PORT);
+    //set_serial_port(sfd,115200,8,'N',1);
+    set_serial_port(sfd,9600,8,'N',1);
 #endif
     if(sfd==-1){
 	blue_print("Open dev error\n");
@@ -567,12 +782,6 @@ int serial_init(void)
 	blue_print("\ncan't create serial recv thread :[%s]", strerror(err));
 	return 1;
     }
-
-    /*test*/
-    send_serial_msg(3,24,0, NULL, 0);
-    sleep(4);
-    send_serial_msg(3,25,0, NULL, 0);
-
     return 0;
 }
 

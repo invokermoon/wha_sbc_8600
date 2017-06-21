@@ -74,6 +74,8 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 /*socket fd*/
 int sockfd;
 
+#define DEVICE_BACKUPS			"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQR"
+
 #define BUFLEN 300
 
 /*
@@ -191,10 +193,17 @@ typedef struct sc_bt_backup_s{
     char roomid[4+1];
 }sc_bt_backup_t;
 
+typedef struct sc_bt_backup_rsp_s{
+    char backups[64+1];
+}sc_bt_backup_rsp_t;
+
 typedef struct sc_bt_query_s{
     char roomid[4+1];
 }sc_bt_query_t;
 
+typedef struct sc_bt_query_rsp_s{
+    char status[2+1];	/*refer to the macro  DEVICE_STATUS_XXXX*/
+}sc_bt_query_rsp_t;
 
 /*Node of message*/
 typedef struct message_node_s{
@@ -207,7 +216,8 @@ typedef struct message_node_s{
 /****Funcs****/
 char *make_send_msg(char *itype,void *data, unsigned int data_len);
 int send_message(char *itype,void *data, unsigned int data_len);
-int send_response(void *buf,char *status,char *error);
+int send_response(char *buf,unsigned int,char *status,char *error);
+
 int serial_init(void );
 char *system_timestamp();
 

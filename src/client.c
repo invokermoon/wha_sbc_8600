@@ -159,16 +159,57 @@ int process_device_status(sc_dev_status_t *data)
 
 }
 
-int send_response(void *buf,char *status,char *error)
+/*use | instead of \0*/
+void add_strings_splitsymbol(char *buf,unsigned int buf_len)
 {
-    unsigned int buf_len=strlen(buf);
+    int i=0;
+    if(buf){
+	/*ignore the last char*/
+	for(i=0;i<(buf_len-3);i++){
+	    if( buf[i]== 0 ) buf[i]='|';
+	}
+    }
+}
+
+/*use \0 instead of |*/
+void remove_strings_splitsymbol(char *buf,unsigned int buf_len)
+{
+    int i=0;
+    if(buf){
+	/*ignore the last char*/
+	for(i=0;i<buf_len;i++){
+	    if( buf[i]=='|') buf[i]=0;
+	    else if( buf[i]=='<') buf[i]=0;
+	    else if( buf[i]=='>') buf[i]=0;
+	}
+    }
+}
+
+int send_response(char *msg_buf,unsigned int buf_len, char *status,char *error)
+{
+    msg_header_t *buf=(msg_header_t *)msg_buf;
     unsigned int error_len=strlen(error);
+    unsigned int len=0;
+
     char slen[8];
     if(error){
 	error_len=strlen(error);
     }
 
-    unsigned int len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len;
+    /*ensure that the symbol is vaild*/
+    memcpy(buf->head,MSG_HEADER_STRING,sizeof(buf->head));
+    add_strings_splitsymbol((char*)buf,buf_len);
+
+    char *end_p=strstr((char*)buf,">>");
+    if( end_p ){
+	/*If this buf have the ">>" */
+	len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len;
+	/*remove the end symbol to connect others strings*/
+	memset(end_p,0,2);
+    }else
+	/*If this buf doesn't have the >>*/
+	len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len+strlen(MSG_TAIL_STRING);
+
     sprintf(slen,"%04d|",len);
 
     char buff[len+2];
@@ -177,16 +218,15 @@ int send_response(void *buf,char *status,char *error)
 	sbc_print("buf is NULL,error\n");
 	return 0;
     }
-    memcpy(buff,buf,strlen(buf));
+
+    memcpy(buff,buf,buf_len);
     /*change the length*/
     char *len_p=strstr(buff,"|");
-    if(len_p)
+    if(len_p){
 	len_p=strstr(len_p+1,"|");
-    memcpy(len_p+1,slen,4);
-
-    /*remove the end symbol*/
-    char *end_p=strstr(buff,">>");
-    memset(end_p,0,2);
+	if(len_p)
+	    memcpy(len_p+1,slen,4);
+    }
 
     strcat(buff,"|");
     strcat(buff,status);
@@ -198,15 +238,24 @@ int send_response(void *buf,char *status,char *error)
     return 0;
 }
 
+void print_header_struct(msg_header_t *header)
+{
+    sbc_color_print(DARY_GRAY,"Id is :%s\n",header->id);
+    sbc_color_print(DARY_GRAY,"version is :%s\n",header->version);
+    sbc_color_print(DARY_GRAY,"len is :%s\n",header->length);
+    sbc_color_print(DARY_GRAY,"itype is :%s\n",header->itype);
+    sbc_color_print(DARY_GRAY,"own is :%s\n",header->own);
+    sbc_color_print(DARY_GRAY,"device is :%s\n",header->device);
+}
+
 int parse_one_message(char *msg)
 {
-    int i=0;
     if(msg==NULL){
 	sbc_print("msg is null\n");
 	return -1;
     }
     size_t len=strlen(msg);
-    sbc_print("Get one msg is:\n%s\nlen=%zd\n",msg,len);
+    sbc_print("Get One Msg is:\n%s\nlen=%zd\n",msg,len);
     if(len<sizeof(msg_header_t)){
 	sbc_print("message size is error\n");
 	sleep(1);
@@ -219,29 +268,21 @@ int parse_one_message(char *msg)
     msg_header_t *header=(msg_header_t*)tmp_buf;
 
     /*remove all the | and << and >>*/
-    for(i=0;i<len;i++){
-	if(tmp_buf[i]=='|'){
-	    tmp_buf[i]=0;
-	}else if(tmp_buf[i]=='<'){
-	    tmp_buf[i]=0;
-	}else if(tmp_buf[i]=='>'){
-	    tmp_buf[i]=0;
-	}
-    }
+    remove_strings_splitsymbol((char*)header,len);
+
+    //print_header_struct(header);
 
     if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
 	sbc_print("Id is error:%s\n",header->id);
-	//send_response(msg,STATUS_FORMAT_FAIL,"error");
 	return -1;
     }
     if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
 	sbc_print("version is error:%s\n",header->version);
-	//send_response(msg,STATUS_FORMAT_FAIL,"error");
 	return -1;
     }
+
     if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
-	//sbc_print("device is error:%s\n",header->device);
-	//send_response(msg,STATUS_FORMAT_FAIL,"error");
+	sbc_print("device is error:%s\n",header->device);
 	return -1;
     }
 
@@ -251,24 +292,24 @@ int parse_one_message(char *msg)
 	return -1;
     }
 
-   if(strncmp(header->itype, ITYPE_CS_COMMITINFO,strlen(ITYPE_CS_COMMITINFO))==0){
-	handler->funcs.sc_commit_rsp(header,0);
+    if(strncmp(header->itype, ITYPE_CS_COMMITINFO,strlen(ITYPE_CS_COMMITINFO))==0){
+	handler->funcs.sc_commit_rsp(header,len);
     }else if(strncmp(header->itype, ITYPE_CS_SCAN,strlen(ITYPE_CS_SCAN))==0){
-	handler->funcs.sc_scan_rsp(header,0);
+	handler->funcs.sc_scan_rsp(header,len);
     }else if(strncmp(header->itype, ITYPE_CS_PAIR_OK,strlen(ITYPE_CS_PAIR_OK))==0){
-	handler->funcs.sc_pair_rsp(header,0);
+	handler->funcs.sc_pair_rsp(header,len);
     }else if(strncmp(header->itype, ITYPE_CS_HEARTBEAT,strlen(ITYPE_CS_HEARTBEAT))==0){
-	handler->funcs.sc_hb_rsp(header,0);
+	handler->funcs.sc_hb_rsp(header,len);
     }else if(strncmp(header->itype, ITYPE_SC_SETDEV,strlen(ITYPE_SC_SETDEV))==0){
-	handler->funcs.sc_setdev(header,0);
+	handler->funcs.sc_setdev(header,len);
     }else if(strncmp(header->itype, ITYPE_SC_RMDEV,strlen(ITYPE_SC_RMDEV))==0){
-	handler->funcs.sc_rmdev(header,0);
+	handler->funcs.sc_rmdev(header,len);
     }else if(strncmp(header->itype, ITYPE_SC_BT_RESTORE,strlen(ITYPE_SC_BT_RESTORE))==0){
-	handler->funcs.sc_bt_restore(header,0);
+	handler->funcs.sc_bt_restore(header,len);
     }else if(strncmp(header->itype, ITYPE_SC_BT_BACKUP,strlen(ITYPE_SC_BT_BACKUP))==0){
-	handler->funcs.sc_bt_backup(header,0);
+	handler->funcs.sc_bt_backup(header,len);
     }else if(strncmp(header->itype, ITYPE_SC_BT_QUERY,strlen(ITYPE_SC_BT_QUERY))==0){
-	handler->funcs.sc_bt_query(header,0);
+	handler->funcs.sc_bt_query(header,len);
     }else{
 	sbc_print("Invalid cmd type =%s\n",header->itype);
     }
@@ -286,27 +327,27 @@ void *send_hb(void *addr)
     char *msg = (char *)make_send_msg(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t));
     unsigned int len=strlen(msg);
     while(1){
-        send(sockfd,msg,len,0);
+	send(sockfd,msg,len,0);
 	sleep(30);
     }
     free(msg);
     return NULL;
 }
 
-struct message_node_s *find_invalid_message()
+static struct message_node_s *find_invalid_node()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
 	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
 	//sbc_print("Read list =%s\n",node->one_msg);
-	if(node->valid==0){
+	if(node && node->valid==0){
 	    return node;
 	}
     }
     return NULL;
 }
 
-void print_message_list()
+static void print_message_list()
 {
     struct list_head *plist,*pnode;
     list_for_each_safe(plist,pnode,&message_list){
@@ -349,7 +390,12 @@ __parse:
 	}
 
     }else if(!hpos){
-	struct message_node_s *p=find_invalid_message();
+	struct message_node_s *p=find_invalid_node();
+	if( (strlen(p->one_msg) + buf_len) > BUFLEN ){
+	    sbc_color_print(RED,"message len is too long, discard it\n");
+	    list_del_init(&(p->list));
+	    return 0;
+	}
 	if(p && !tpos){
 	    memcpy(p->one_msg+strlen(p->one_msg),spos,buf_len);
 	    p->valid=0;
@@ -367,7 +413,7 @@ __parse:
 	list_add(&p->list, &message_list);
 
     }else if(hpos && tpos && tpos < hpos){
-	struct message_node_s *p=find_invalid_message();
+	struct message_node_s *p=find_invalid_node();
 	if(p){
 	    memcpy(p->one_msg+strlen(p->one_msg),spos,tpos-spos+2);
 	    p->valid=1;
@@ -522,6 +568,12 @@ _retry:
 	}
 	else if(strncmp("pairok",buf,6)==0){
 	    handler->funcs.cs_pair(NULL,0);
+	}
+	else if(strncmp("serialcheck",buf,10)==0){
+	    send_serial_msg(3,24,0, NULL, 0);
+	}
+	else if(strncmp("serialpair",buf,4)==0){
+	    send_serial_msg(3,24,2, NULL, 0);
 	}else{
 	    sbc_print("Invalid cmd!\n");
 	    goto _retry;

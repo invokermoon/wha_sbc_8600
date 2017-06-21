@@ -42,9 +42,7 @@ $(info server_objs_out=$(server_objs_out))
 $(info client_objs_out=$(client_objs_out))
 
 #CC      := gcc
-#CC :=/home/sherlock/envtools/Gcc/gcc-arm-none-eabi-6-2017-q1-update/bin/arm-none-eabi-gcc
-#CC :=/home/sherlock/envtools/Gcc/arm-2013.11/bin/arm-none-linux-gnueabi-gcc
-CC :=/home/sherlock/envtools/Gcc/arm-2009q1/bin/arm-none-linux-gnueabi-gcc
+CC :=arm-none-linux-gnueabi-gcc
 CFLAGS  := -ggdb -Wall -DBUILD_TIME="\"`date`\"" -DDEBUG_
 INCLUDE := -I ./include
 LIB     := -lpthread -ldl -lrt -lm

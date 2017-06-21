@@ -53,6 +53,7 @@ int cs_commit(void *buf,unsigned int length)
     send_message(ITYPE_CS_COMMITINFO,&data_buf,sizeof(cs_commit_msg_t)-1);
     return 0;
 }
+
 int cs_pair(void *buf,unsigned int length)
 {
     cs_pair_msg_t data_buf={
@@ -72,27 +73,74 @@ int sc_setdev(msg_header_t *buf,unsigned int len)
     sc_dev_status_t *data=(sc_dev_status_t *)buf->data;
     sbc_print("roomid:%s\n",data->roomid);
     sbc_print("status:%s\n",data->status);
-    send_response(buf,STATUS_FORMAT_FAIL,"error");
+    if(strncmp(data->status, DEVICE_STATUS_READYPAIR,strlen(DEVICE_STATUS_READYPAIR))==0){
+        char floorid=atoi(data->roomid)/100;
+        char roomid=atoi(data->roomid)%100;
+        send_serial_msg(floorid,roomid,2, NULL, 0);
+    }
+
+    send_response((char*)buf,len,STATUS_OK,"0");
+
     return 0;
 }
 
 int sc_rmdev(msg_header_t *buf,unsigned int len)
 {
+    sc_dev_rm_t *data=(sc_dev_rm_t *)buf->data;
+    sbc_print("roomid:%s\n",data->roomid);
+
+    send_response((char*)buf,len,STATUS_OK,"0");
+
     return 0;
 }
 
 int sc_bt_restore(msg_header_t *buf,unsigned int len)
 {
+    sc_bt_restore_t *data=(sc_bt_restore_t *)buf->data;
+    sbc_print("roomid:%s\n",data->roomid);
+    sbc_print("backups:%s\n",data->backups);
+
+    send_response((char*)buf,len,STATUS_OK,"0");
+
     return 0;
 }
 
 int sc_bt_backup(msg_header_t *buf,unsigned int len)
 {
+    sc_bt_backup_t *data=(sc_bt_backup_t *)buf->data;
+    sbc_print("roomid:%s\n",data->roomid);
+
+    sc_bt_backup_rsp_t rsp_data={
+	.backups=DEVICE_BACKUPS,
+    };
+
+    char *rsp_buf=malloc(len+sizeof(rsp_data)+1);
+    memset(rsp_buf,0,len+sizeof(rsp_data)+1);
+    memcpy(rsp_buf,buf,len);
+    memcpy(rsp_buf+len-1,&rsp_data,sizeof(rsp_data));
+
+    send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
+    free(rsp_buf);
+
     return 0;
 }
 
 int sc_bt_query(msg_header_t *buf,unsigned int len)
 {
+    sc_bt_query_t *data=(sc_bt_query_t *)buf->data;
+    sbc_print("roomid:%s\n",data->roomid);
+
+    sc_bt_query_rsp_t rsp_data={
+	.status=DEVICE_STATUS_READYPAIR,
+    };
+
+    char *rsp_buf=malloc(len+sizeof(rsp_data)+1);
+    memset(rsp_buf,0,len+sizeof(rsp_data)+1);
+    memcpy(rsp_buf,buf,len);
+    memcpy(rsp_buf+len-1,&rsp_data,sizeof(rsp_data));
+    send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
+    free(rsp_buf);
+
     return 0;
 }
 

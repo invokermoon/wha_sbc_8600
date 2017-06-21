@@ -12,7 +12,8 @@ elif [ "$1" == "serial" ]; then
 elif [ "$1" == "sgdb" ]; then
     sudo gdb ./out/client_bin -x debug.gdb
 else
-    gnome-terminal -t "client" -x bash -c "./out/client_bin 172.29.2.17 4569"
+    #gnome-terminal -t "client" -x bash -c "./out/client_bin 172.29.2.17 4569"
+    sudo ./out/client_bin 172.29.2.17 4569
 fi
 
 #./sync-client 172.29.2.17 4567

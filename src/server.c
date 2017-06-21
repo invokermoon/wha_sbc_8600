@@ -38,6 +38,9 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <sys/types.h>
 #include <unistd.h>
 #include <signal.h>
+#include <pthread.h>
+#include <termios.h>
+
 
 /*color for print*/
 #define NONE         "\033[m"
@@ -69,6 +72,10 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 
 /*interface type:server-->client*/
 #define ITYPE_SETSTATUS	"61"
+int ThreadsExit=1;
+pthread_t p_tid[3];
+
+
 
 /*Mac*/
 #define MAC_ADDRESS	"11:22:33:44:55:66"
@@ -109,7 +116,7 @@ typedef struct msg_rsp_s{
 
 
 typedef void (*sighandler_t)(int);
-#define BUFLEN 200
+#define BUFLEN 400
 int sockfd, newfd;
 void sig_pipe(int signo);
 
@@ -181,6 +188,37 @@ char *sending_status_error(void *buf,char *status,char *error)
     return buff;
 }
 
+void *send_test(void *addr)
+{
+    sbc_print("Thread init\n");
+    sleep(8);
+    //set dev status
+#if 0
+    char *msg1="<<10000001|61|0055|01|0000000001|ABCDEFGHIJKL|0022|01>>";
+    send(newfd,msg1,strlen(msg1),0);
+    sleep(8);
+    char *msg11="<<10000001|62|0052|01|0000000001|ABCDEFGHIJKL|0022>>";
+    send(newfd,msg11,strlen(msg11),0);
+    sleep(8);
+
+#endif
+    //restore
+    char *msg2="<<10000001|63|0054|01|0000000001|ABCDEFGHIJKL|0022|1>>";
+    send(newfd,msg2,strlen(msg2),0);
+    sleep(8);
+    //backup
+    char *msg3="<<10000001|64|0052|01|0000000001|ABCDEFGHIJKL|0022>>";
+    send(newfd,msg3,strlen(msg3),0);
+    sleep(8);
+    //query
+    char *msg4="<<10000001|65|0052|01|0000000001|ABCDEFGHIJKL|0022>>";
+    send(newfd,msg4,strlen(msg4),0);
+
+    return NULL;
+}
+
+
+
 int main(int argc, char **argv)
 {
     struct sockaddr_in s_addr, c_addr;
@@ -232,6 +270,15 @@ int main(int argc, char **argv)
         exit(errno);
     }else
         printf("the server is listening!\n");
+
+    int err = pthread_create(&p_tid[0], NULL, &send_test,  (void*)&ThreadsExit);
+    if (err != 0)
+    {
+	sbc_print("\ncan't create heartbeat thread :[%s]", strerror(err));
+	return 1;
+    }
+
+
     while(1){
         printf("*****************聊天开始***************\n");
         len = sizeof(struct sockaddr);
@@ -246,8 +293,18 @@ int main(int argc, char **argv)
             len = recv(newfd,buf,BUFLEN,0);
             if(len > 0){
 		    printf("\n客户端发来的信息是：\n%s,共有字节数是: %d\n",buf,len);
-		    char *msg = sending_status_error(buf,STATUS_OK,"worinidayedeaaaa");
-		    send(newfd,msg,strlen(msg),0);
+		    char *msg=NULL;
+#if 1
+		    if(strstr(buf,"|88|"))
+			msg = sending_status_error(buf,STATUS_OK,"worinidayedeaaaa");
+		    else if(buf[11] == '0' && buf[10] == '|')
+			msg = sending_status_error(buf,STATUS_OK,"worinidayedeaaaa");
+#else
+		    msg = sending_status_error(buf,STATUS_OK,"worinidayedeaaaa");
+#endif
+
+		    if(msg)
+			send(newfd,msg,strlen(msg),0);
 #if 0
 		    char *msg2 ="<<10000001|88|0065|01|1111111111|ABCDEFGHIJKL|";
 		    send(newfd,msg2,strlen(msg2),0);
@@ -258,7 +315,8 @@ int main(int argc, char **argv)
 		    char *msg4	="00|error>>";
 		    send(newfd,msg4,strlen(msg4),0);
 #endif
-		    free(msg);
+		    if(msg)
+			free(msg);
 	    }
             else{
                 if(len < 0 )
