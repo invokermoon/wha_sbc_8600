@@ -26,9 +26,6 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 *ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 *POSSIBILITY OF SUCH DAMAGE.
 */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <errno.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -42,24 +39,24 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <termios.h>
 #include "cJSON.h"
 #include "client.h"
+#include "serial.h"
 
 int ThreadsExit=1;
 pthread_t p_tid[3];
 
 /*Global list head*/
-LIST_HEAD(message_list);
-
+LIST_HEAD(socket_recv_message_list);
 
 typedef void (*sighandler_t)(int);
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_parse_msg = PTHREAD_MUTEX_INITIALIZER;
 
 void sig_pipe(int signo);
 
 void sig_pipe(int signo)
 {
-    sbc_print("catch a signal...\n");
+    socket_print("catch a signal...\n");
     sleep(3);
     if(signo == SIGTSTP){
 	close(sockfd);
@@ -80,14 +77,14 @@ char *system_timestamp()
     return time_buf;
 }
 
-char *make_send_msg(char *itype,void *data, unsigned int data_len)
+char *make_socket_socket_send_message(char *itype,void *data, unsigned int data_len)
 {
     pthread_mutex_lock(&mutex);
     int i =0 ;
     char slen[6];
     char iitype[4]={0};
     if(data==NULL||data==0){
-	sbc_print("data is null,make msg fail\n");
+	socket_print("Data is Null,fail\n");
 	return NULL;
     }
 
@@ -98,12 +95,13 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
 
     unsigned len = data_len + sizeof(struct msg_header) + strlen(MSG_TAIL_STRING);
 
-    msg_header_t *header=malloc(len+1);
+    socket_message_header_t *header=malloc(len+1);
     memset(header,0,len+1);
 
     memcpy(iitype,itype,2);
     memcpy(iitype+2,"|",1);
-    sbc_print("data_len=%d,iitype=%s\n",data_len,iitype);
+
+    sbc_print(DEBUG_DBG, "data_len=%d,iitype=%s\n",data_len,iitype);
 
     sprintf(slen,"%04d|",len);
 
@@ -130,37 +128,31 @@ char *make_send_msg(char *itype,void *data, unsigned int data_len)
     /*add the tail mask*/
     memcpy(header->data+data_len,MSG_TAIL_STRING,strlen(MSG_TAIL_STRING));
 
-    sbc_print("Complete msg:\n%s\nlen=%d\n",(char *)header,len);
+    socket_print("Send msg:\n%s\nlen=%d\n",(char *)header,len);
     pthread_mutex_unlock(&mutex);
     return (char*)header;
 }
 
-int send_message(char *itype,void *data, unsigned int data_len)
+int socket_send_message(char *itype,void *data, unsigned int data_len)
 {
-    char *msg=(char *)make_send_msg(itype,data,data_len);
+    char *msg=(char *)make_socket_socket_send_message(itype,data,data_len);
 
     unsigned int wsize=strlen(msg);
     socklen_t len = send(sockfd,msg,wsize,0);
 
     free(msg);
     if(len > 0)
-	sbc_print("Send success：%d\n",len);
+	socket_print("Send success：%d\n",len);
     else{
-	sbc_print("Send fail!\n");
+	socket_print("Send fail!\n");
 	sleep(1);
 	return -1;
     }
     return 0;
 }
 
-int process_device_status(sc_dev_status_t *data)
-{
-    return 0;
-
-}
-
 /*use | instead of \0*/
-void add_strings_splitsymbol(char *buf,unsigned int buf_len)
+static void add_strings_splitsymbol(char *buf,unsigned int buf_len)
 {
     int i=0;
     if(buf){
@@ -172,7 +164,7 @@ void add_strings_splitsymbol(char *buf,unsigned int buf_len)
 }
 
 /*use \0 instead of |*/
-void remove_strings_splitsymbol(char *buf,unsigned int buf_len)
+static void remove_strings_splitsymbol(char *buf,unsigned int buf_len)
 {
     int i=0;
     if(buf){
@@ -185,9 +177,9 @@ void remove_strings_splitsymbol(char *buf,unsigned int buf_len)
     }
 }
 
-int send_response(char *msg_buf,unsigned int buf_len, char *status,char *error)
+int socket_send_response(char *msg_buf,unsigned int buf_len, char *status,char *error)
 {
-    msg_header_t *buf=(msg_header_t *)msg_buf;
+    socket_message_header_t *buf=(socket_message_header_t *)msg_buf;
     unsigned int error_len=strlen(error);
     unsigned int len=0;
 
@@ -203,19 +195,19 @@ int send_response(char *msg_buf,unsigned int buf_len, char *status,char *error)
     char *end_p=strstr((char*)buf,">>");
     if( end_p ){
 	/*If this buf have the ">>" */
-	len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len;
+	len=buf_len+strlen("|")+sizeof(socket_message_rsp_t)+error_len;
 	/*remove the end symbol to connect others strings*/
 	memset(end_p,0,2);
     }else
 	/*If this buf doesn't have the >>*/
-	len=buf_len+strlen("|")+sizeof(msg_rsp_t)+error_len+strlen(MSG_TAIL_STRING);
+	len=buf_len+strlen("|")+sizeof(socket_message_rsp_t)+error_len+strlen(MSG_TAIL_STRING);
 
     sprintf(slen,"%04d|",len);
 
     char buff[len+2];
     memset(buff,0,len+2);
     if(buf==NULL){
-	sbc_print("buf is NULL,error\n");
+	socket_print("buf is NULL,error\n");
 	return 0;
     }
 
@@ -233,12 +225,12 @@ int send_response(char *msg_buf,unsigned int buf_len, char *status,char *error)
     strcat(buff,"|");
     strcat(buff,error);
     strcat(buff,MSG_TAIL_STRING);
-    sbc_print("rsp msg is: \n%s\nlen=%d\n",buff,len);
+    socket_print("Rsp msg: \n%s   len=%d\n",buff,len);
     send(sockfd,buff,len,0);
     return 0;
 }
 
-void print_header_struct(msg_header_t *header)
+void print_header_struct(socket_message_header_t *header)
 {
     sbc_color_print(DARY_GRAY,"Id is :%s\n",header->id);
     sbc_color_print(DARY_GRAY,"version is :%s\n",header->version);
@@ -248,16 +240,16 @@ void print_header_struct(msg_header_t *header)
     sbc_color_print(DARY_GRAY,"device is :%s\n",header->device);
 }
 
-int parse_one_message(char *msg)
+int socket_parse_one_message(char *msg)
 {
     if(msg==NULL){
-	sbc_print("msg is null\n");
+	socket_print("msg is null\n");
 	return -1;
     }
     size_t len=strlen(msg);
-    sbc_print("Get One Msg is:\n%s\nlen=%zd\n",msg,len);
-    if(len<sizeof(msg_header_t)){
-	sbc_print("message size is error\n");
+    socket_print("One Msg is:\n%s len=%zd\n",msg,len);
+    if(len<sizeof(socket_message_header_t)){
+	socket_print("message size is error\n");
 	sleep(1);
 	return -1;
     }
@@ -265,7 +257,7 @@ int parse_one_message(char *msg)
     memset(tmp_buf,0,len+1);
     memcpy(tmp_buf,msg,len);
 
-    msg_header_t *header=(msg_header_t*)tmp_buf;
+    socket_message_header_t *header=(socket_message_header_t*)tmp_buf;
 
     /*remove all the | and << and >>*/
     remove_strings_splitsymbol((char*)header,len);
@@ -273,22 +265,22 @@ int parse_one_message(char *msg)
     //print_header_struct(header);
 
     if(strncmp(header->id,MSG_ID,strlen(header->id)-1)!=0){
-	sbc_print("Id is error:%s\n",header->id);
+	socket_print("Id is error:%s\n",header->id);
 	return -1;
     }
     if(strncmp(header->version,VERSION,strlen(header->version)-1)!=0){
-	sbc_print("version is error:%s\n",header->version);
+	socket_print("version is error:%s\n",header->version);
 	return -1;
     }
 
     if(strncmp(header->device,DEVICE,strlen(header->device)-1)!=0){
-	sbc_print("device is error:%s\n",header->device);
+	socket_print("device is error:%s\n",header->device);
 	return -1;
     }
 
     if(atoi(header->length) != len){
-	//send_response(msg,STATUS_MSG_INCOMPLETE,"error");
-	sbc_print("length is error:%s\n",header->length);
+	//socket_send_response(msg,STATUS_MSG_INCOMPLETE,"error");
+	socket_print("length is error:%s\n",header->length);
 	return -1;
     }
 
@@ -311,7 +303,7 @@ int parse_one_message(char *msg)
     }else if(strncmp(header->itype, ITYPE_SC_BT_QUERY,strlen(ITYPE_SC_BT_QUERY))==0){
 	handler->funcs.sc_bt_query(header,len);
     }else{
-	sbc_print("Invalid cmd type =%s\n",header->itype);
+	socket_print("Invalid cmd type =%s\n",header->itype);
     }
     free(header);
     return 0;
@@ -319,12 +311,12 @@ int parse_one_message(char *msg)
 
 void *send_hb(void *addr)
 {
-    sbc_print("Thread init\n");
+    socket_print("Thread init\n");
     sleep(5);
     cs_hb_msg_t data_buf={
 	.Mac=MAC_ADDRESS,
     };
-    char *msg = (char *)make_send_msg(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t));
+    char *msg = (char *)make_socket_socket_send_message(ITYPE_CS_HEARTBEAT,&data_buf,sizeof(cs_hb_msg_t));
     unsigned int len=strlen(msg);
     while(1){
 	send(sockfd,msg,len,0);
@@ -334,12 +326,12 @@ void *send_hb(void *addr)
     return NULL;
 }
 
-static struct message_node_s *find_invalid_node()
+static struct socket_message_node_s *find_invalid_node()
 {
     struct list_head *plist,*pnode;
-    list_for_each_safe(plist,pnode,&message_list){
-	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
-	//sbc_print("Read list =%s\n",node->one_msg);
+    list_for_each_safe(plist,pnode,&socket_recv_message_list){
+	struct socket_message_node_s *node = list_entry(plist,struct socket_message_node_s,list);
+	//socket_print("Read list =%s\n",node->one_msg);
 	if(node && node->valid==0){
 	    return node;
 	}
@@ -347,18 +339,18 @@ static struct message_node_s *find_invalid_node()
     return NULL;
 }
 
-static void print_message_list()
+static void __attribute__((unused)) print_message_list()
 {
     struct list_head *plist,*pnode;
-    list_for_each_safe(plist,pnode,&message_list){
-	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
-	sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
+    list_for_each_safe(plist,pnode,&socket_recv_message_list){
+	struct socket_message_node_s *node = list_entry(plist,struct socket_message_node_s,list);
+	socket_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
     }
 }
 
-int parse_message(char *buf)
+int socket_parse_messages(char *buf)
 {
-    pthread_mutex_lock(&mutex1);
+    pthread_mutex_lock(&mutex_parse_msg);
 
     unsigned int buf_len;
     char *spos;
@@ -376,13 +368,14 @@ __parse:
      * 3:<<XXXXXXX
      * 4:>><<XXXXXXX or XXXX>><<XXXX******
      * */
-    //sbc_print("hpos=0x%p,tpos=0x%p,spos=0x%p,buf_len=%d\n",hpos,tpos,spos,buf_len);
+    sbc_print(DEBUG_DBG,"hpos=0x%p,tpos=0x%p,spos=0x%p,buf_len=%d\n",hpos,tpos,spos,buf_len);
+
     if(hpos && tpos && (hpos < tpos)){
-	struct message_node_s *p=malloc(sizeof(message_node_t));
-	memset(p,0,sizeof(message_node_t));
+	struct socket_message_node_s *p=malloc(sizeof(socket_message_node_t));
+	memset(p,0,sizeof(socket_message_node_t));
 	memcpy(p->one_msg,hpos,tpos-hpos+2);
 	p->valid=1;
-	list_add(&p->list, &message_list);
+	list_add(&p->list, &socket_recv_message_list);
 
 	if(buf_len > (tpos-hpos+2)){
 	    buf=tpos+2;
@@ -390,7 +383,7 @@ __parse:
 	}
 
     }else if(!hpos){
-	struct message_node_s *p=find_invalid_node();
+	struct socket_message_node_s *p=find_invalid_node();
 	if( (strlen(p->one_msg) + buf_len) > BUFLEN ){
 	    sbc_color_print(RED,"message len is too long, discard it\n");
 	    list_del_init(&(p->list));
@@ -406,14 +399,14 @@ __parse:
 
 
     }else if( hpos && !tpos){
-	struct message_node_s *p=malloc(sizeof(message_node_t));
-	memset(p,0,sizeof(message_node_t));
+	struct socket_message_node_s *p=malloc(sizeof(socket_message_node_t));
+	memset(p,0,sizeof(socket_message_node_t));
 	memcpy(p->one_msg,hpos,buf_len);
 	p->valid=0;
-	list_add(&p->list, &message_list);
+	list_add(&p->list, &socket_recv_message_list);
 
     }else if(hpos && tpos && tpos < hpos){
-	struct message_node_s *p=find_invalid_node();
+	struct socket_message_node_s *p=find_invalid_node();
 	if(p){
 	    memcpy(p->one_msg+strlen(p->one_msg),spos,tpos-spos+2);
 	    p->valid=1;
@@ -427,11 +420,11 @@ __parse:
     //print_message_list();
 
     struct list_head *plist,*pnode;
-    list_for_each_safe(plist,pnode,&message_list){
-	struct message_node_s *node = list_entry(plist,struct message_node_s,list);
-	//sbc_print("Read list =%s,valid=%d\n",node->one_msg,node->valid);
+    list_for_each_safe(plist,pnode,&socket_recv_message_list){
+	struct socket_message_node_s *node = list_entry(plist,struct socket_message_node_s,list);
+	sbc_print(DEBUG_DBG,"Read list =%s,valid=%d\n",node->one_msg,node->valid);
 	if(node->valid){
-	    parse_one_message(node->one_msg);
+	    socket_parse_one_message(node->one_msg);
 	    list_del_init(plist);
 	    free(node);
 	}
@@ -439,27 +432,27 @@ __parse:
 
     //print_message_list();
 
-    pthread_mutex_unlock(&mutex1);
+    pthread_mutex_unlock(&mutex_parse_msg);
     return 0;
 }
 
 
 void *recv_handler(void *addr)
 {
-    sbc_print("Thread init\n");
+    socket_print("Thread init\n");
     while(1){
 	char buf[BUFLEN];
 	bzero(buf,BUFLEN);
 	int len = recv(sockfd,buf,BUFLEN,0);
 	if(len > 0){
-	    //sbc_print("\n服务器发来的消息是：\n%s\n,共有字节数是: %d\n",buf,len);
-	    parse_message(buf);
+	    sbc_print(DEBUG_DBG, "\n服务器发来的消息是：\n%s\n,共有字节数是: %d\n",buf,len);
+	    socket_parse_messages(buf);
 	}
 	else{
 	    if(len < 0 )
-		sbc_print("接受消息失败！\n");
+		socket_print("接受消息失败！\n");
 	    else
-		sbc_print("服务器退出了，聊天终止！\n");
+		socket_print("服务器退出了，聊天终止！\n");
 	    sleep(3);
 	    break;
 	}
@@ -479,12 +472,12 @@ int main(int argc, char **argv)
 	perror("socket");
 	exit(errno);
     }else
-	sbc_print("socket create success!\n");
+	socket_print("socket create success!\n");
 
     sighandler_t ret;
     ret = signal(SIGTSTP,sig_pipe);
     if(ret<0){
-	sbc_print("Signal connect error\n");
+	socket_print("Signal connect error\n");
     }
 
     memset(ip_addr,0,sizeof(ip_addr));
@@ -499,7 +492,7 @@ int main(int argc, char **argv)
 	port = IP_PORT;
 	memcpy(ip_addr,IP_ADDR,strlen(IP_ADDR));
     }
-    sbc_print("IP=%s,port=%d\n",ip_addr,port);
+    socket_print("IP=%s,port=%d\n",ip_addr,port);
 
     bzero(&s_addr, sizeof(s_addr));
     s_addr.sin_family = AF_INET;
@@ -512,13 +505,13 @@ int main(int argc, char **argv)
 	perror("connect");
 	exit(errno);
     }else
-	sbc_print("conncet success!\n");
+	socket_print("conncet success!\n");
 
     /*build the heartbeat system*/
     int err = pthread_create(&p_tid[0], NULL, &send_hb,  (void*)&ThreadsExit);
     if (err != 0)
     {
-	sbc_print("\ncan't create heartbeat thread :[%s]", strerror(err));
+	socket_print("\ncan't create heartbeat thread :[%s]", strerror(err));
 	return 1;
     }
 
@@ -528,7 +521,7 @@ int main(int argc, char **argv)
     err = pthread_create(&p_tid[1], NULL, &recv_handler,  (void*)&ThreadsExit);
     if (err != 0)
     {
-	sbc_print("\ncan't create recv thread :[%s]", strerror(err));
+	socket_print("\ncan't create recv thread :[%s]", strerror(err));
 	return 1;
     }
 
@@ -542,24 +535,22 @@ int main(int argc, char **argv)
     while(1){
 _retry:
 	bzero(buf,BUFLEN);
-	sbc_print("请输入发送给对方的消息：\n");
+	socket_print("请输入发送给对方的消息：\n");
 
 	fgets(buf,BUFLEN,stdin);
 	//fputs(buf,stdout);
 	if(!strncasecmp(buf,"quit",4)){
-	    sbc_print("client 请求终止聊天!\n");
+	    socket_print("client 请求终止聊天!\n");
 	    break;
 	}
 	if(!strncmp(buf,"\n",1)){
-	    sbc_print("输入的字符只有回车，这个是不正确的！！！\n");
+	    socket_print("输入的字符只有回车，这个是不正确的！！！\n");
 	    goto _retry;
 	}
-#if 1
 	if(strchr(buf,'\n')){
-	    //memcpy(sbdata->jsdata,buf,strlen(buf)-1);
 	    buf[strlen(buf)-1]=0;
 	}
-#endif
+
 	if(strncmp(buf,"commit",5)==0){
 	    handler->funcs.cs_commit(NULL,0);
 	}
@@ -570,12 +561,12 @@ _retry:
 	    handler->funcs.cs_pair(NULL,0);
 	}
 	else if(strncmp("serialcheck",buf,10)==0){
-	    send_serial_msg(3,24,0, NULL, 0);
+	    serial_send_message(3,24,0, NULL, 0);
 	}
 	else if(strncmp("serialpair",buf,4)==0){
-	    send_serial_msg(3,24,2, NULL, 0);
+	    serial_send_message(3,24,2, NULL, 0);
 	}else{
-	    sbc_print("Invalid cmd!\n");
+	    socket_print("Invalid cmd!\n");
 	    goto _retry;
 	}
     }

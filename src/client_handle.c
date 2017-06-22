@@ -29,6 +29,7 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include<stdio.h>
 #include<stdlib.h>
 #include "client.h"
+#include "serial.h"
 
 int cs_scan(void *buf,unsigned int length)
 {
@@ -40,7 +41,7 @@ int cs_scan(void *buf,unsigned int length)
     };
     memcpy(data_buf.timestamp,system_timestamp(),sizeof(data_buf.timestamp));
     /*we need ignore the "\0" of timestamp */
-    send_message(ITYPE_CS_SCAN,&data_buf,sizeof(cs_scan_msg_t)-1);
+    socket_send_message(ITYPE_CS_SCAN,&data_buf,sizeof(cs_scan_msg_t)-1);
 
     return 0;
 }
@@ -50,7 +51,7 @@ int cs_commit(void *buf,unsigned int length)
     cs_commit_msg_t data_buf={
 	.Mac="12345678",
     };
-    send_message(ITYPE_CS_COMMITINFO,&data_buf,sizeof(cs_commit_msg_t)-1);
+    socket_send_message(ITYPE_CS_COMMITINFO,&data_buf,sizeof(cs_commit_msg_t)-1);
     return 0;
 }
 
@@ -63,52 +64,52 @@ int cs_pair(void *buf,unsigned int length)
 	.phoneMac=PHONE_MAC_ADDRESS__,
     };
     memcpy(data_buf.timestamp,system_timestamp(),sizeof(data_buf.timestamp));
-    send_message(ITYPE_CS_PAIR_OK,&data_buf,sizeof(cs_pair_msg_t)-1);
+    socket_send_message(ITYPE_CS_PAIR_OK,&data_buf,sizeof(cs_pair_msg_t)-1);
 
     return 0;
 }
 
-int sc_setdev(msg_header_t *buf,unsigned int len)
+int sc_setdev(socket_message_header_t *buf,unsigned int len)
 {
     sc_dev_status_t *data=(sc_dev_status_t *)buf->data;
-    sbc_print("roomid:%s\n",data->roomid);
-    sbc_print("status:%s\n",data->status);
+    socket_print("roomid:%s\n",data->roomid);
+    socket_print("status:%s\n",data->status);
     if(strncmp(data->status, DEVICE_STATUS_READYPAIR,strlen(DEVICE_STATUS_READYPAIR))==0){
         char floorid=atoi(data->roomid)/100;
         char roomid=atoi(data->roomid)%100;
-        send_serial_msg(floorid,roomid,2, NULL, 0);
+        serial_send_message(floorid,roomid,2, NULL, 0);
     }
 
-    send_response((char*)buf,len,STATUS_OK,"0");
+    socket_send_response((char*)buf,len,STATUS_OK,"0");
 
     return 0;
 }
 
-int sc_rmdev(msg_header_t *buf,unsigned int len)
+int sc_rmdev(socket_message_header_t *buf,unsigned int len)
 {
     sc_dev_rm_t *data=(sc_dev_rm_t *)buf->data;
-    sbc_print("roomid:%s\n",data->roomid);
+    socket_print("roomid:%s\n",data->roomid);
 
-    send_response((char*)buf,len,STATUS_OK,"0");
+    socket_send_response((char*)buf,len,STATUS_OK,"0");
 
     return 0;
 }
 
-int sc_bt_restore(msg_header_t *buf,unsigned int len)
+int sc_bt_restore(socket_message_header_t *buf,unsigned int len)
 {
     sc_bt_restore_t *data=(sc_bt_restore_t *)buf->data;
-    sbc_print("roomid:%s\n",data->roomid);
-    sbc_print("backups:%s\n",data->backups);
+    socket_print("roomid:%s\n",data->roomid);
+    socket_print("backups:%s\n",data->backups);
 
-    send_response((char*)buf,len,STATUS_OK,"0");
+    socket_send_response((char*)buf,len,STATUS_OK,"0");
 
     return 0;
 }
 
-int sc_bt_backup(msg_header_t *buf,unsigned int len)
+int sc_bt_backup(socket_message_header_t *buf,unsigned int len)
 {
     sc_bt_backup_t *data=(sc_bt_backup_t *)buf->data;
-    sbc_print("roomid:%s\n",data->roomid);
+    socket_print("roomid:%s\n",data->roomid);
 
     sc_bt_backup_rsp_t rsp_data={
 	.backups=DEVICE_BACKUPS,
@@ -119,16 +120,16 @@ int sc_bt_backup(msg_header_t *buf,unsigned int len)
     memcpy(rsp_buf,buf,len);
     memcpy(rsp_buf+len-1,&rsp_data,sizeof(rsp_data));
 
-    send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
+    socket_send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
     free(rsp_buf);
 
     return 0;
 }
 
-int sc_bt_query(msg_header_t *buf,unsigned int len)
+int sc_bt_query(socket_message_header_t *buf,unsigned int len)
 {
     sc_bt_query_t *data=(sc_bt_query_t *)buf->data;
-    sbc_print("roomid:%s\n",data->roomid);
+    socket_print("roomid:%s\n",data->roomid);
 
     sc_bt_query_rsp_t rsp_data={
 	.status=DEVICE_STATUS_READYPAIR,
@@ -138,39 +139,38 @@ int sc_bt_query(msg_header_t *buf,unsigned int len)
     memset(rsp_buf,0,len+sizeof(rsp_data)+1);
     memcpy(rsp_buf,buf,len);
     memcpy(rsp_buf+len-1,&rsp_data,sizeof(rsp_data));
-    send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
+    socket_send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
     free(rsp_buf);
 
     return 0;
 }
 
-
-int commit_rsp(msg_header_t *buf,unsigned int len)
+int commit_rsp(socket_message_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_commit_msg_t));
-    sbc_print("Handle the commit rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    socket_message_rsp_t *rsp=(socket_message_rsp_t*)(buf->data+sizeof(cs_commit_msg_t));
+    socket_print("Handle the commit rsp status=%s,error=%s\n",rsp->status,rsp->error);
     return 0;
 }
 
-int scan_rsp(msg_header_t *buf,unsigned int len)
+int scan_rsp(socket_message_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_scan_msg_t));
-    sbc_print("Handle the scan rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    socket_message_rsp_t *rsp=(socket_message_rsp_t*)(buf->data+sizeof(cs_scan_msg_t));
+    socket_print("Handle the scan rsp status=%s,error=%s\n",rsp->status,rsp->error);
     return 0;
 }
 
-int pair_rsp(msg_header_t *buf,unsigned int len)
+int pair_rsp(socket_message_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_pair_msg_t));
-    sbc_print("Handle the pair rsp status=%s,error=%s\n",rsp->status,rsp->error);
+    socket_message_rsp_t *rsp=(socket_message_rsp_t*)(buf->data+sizeof(cs_pair_msg_t));
+    socket_print("Handle the pair rsp status=%s,error=%s\n",rsp->status,rsp->error);
     return 0;
 }
 
-int hb_rsp(msg_header_t *buf,unsigned int len)
+int hb_rsp(socket_message_header_t *buf,unsigned int len)
 {
-    msg_rsp_t *rsp=(msg_rsp_t*)(buf->data+sizeof(cs_hb_msg_t));
+    socket_message_rsp_t *rsp=(socket_message_rsp_t*)(buf->data+sizeof(cs_hb_msg_t));
     cs_hb_msg_t *hb=(cs_hb_msg_t*)(buf->data);
-    sbc_print("Handle the hb rsp status=%s,error=%s,hb->Mac=%s\n",rsp->status,rsp->error,hb->Mac);
+    socket_print("Handle the hb rsp status=%s,error=%s,hb->Mac=%s\n",rsp->status,rsp->error,hb->Mac);
     return 0;
 }
 

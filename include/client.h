@@ -41,31 +41,9 @@ Copyright (c) 2015, Intel Corporation. All rights reserved.
 #include <signal.h>
 #include <sys/mman.h>
 #include <termios.h>
-#include <time.h>  
-#include "cJSON.h"
+#include <time.h>
 #include "list.h"
-
-
-/*color for print*/
-#define NONE         "\033[m"
-#define RED          "\033[0;32;31m"
-#define LIGHT_RED    "\033[1;31m"
-#define GREEN        "\033[0;32;32m"
-#define LIGHT_GREEN  "\033[1;32m"
-#define BLUE         "\033[0;32;34m"
-#define LIGHT_BLUE   "\033[1;34m"
-#define DARY_GRAY    "\033[1;30m"
-#define CYAN         "\033[0;36m"
-#define LIGHT_CYAN   "\033[1;36m"
-#define PURPLE       "\033[0;35m"
-#define LIGHT_PURPLE "\033[1;35m"
-#define BROWN        "\033[0;33m"
-#define YELLOW       "\033[1;33m"
-#define LIGHT_GRAY   "\033[0;37m"
-#define WHITE        "\033[1;37m"
-#define sbc_print(fmt,...) do {  printf(GREEN"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
-#define blue_print(fmt,...) do {  printf(BLUE"[%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
-#define sbc_color_print(color,fmt,...) do {  printf(color"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
+#include "debug.h"
 
 /*IP and port*/
 #define IP_ADDR	"106.14.60.75"
@@ -139,13 +117,13 @@ typedef struct msg_header{
     char own[10+1];
     char device[12+1];
     char data[0];
-}msg_header_t;
+}socket_message_header_t;
 
 /*Common msg rsp*/
-typedef struct msg_rsp_s{
+typedef struct socket_message_rsp_s{
     char status[2+1];
     char error[0];
-}msg_rsp_t;
+}socket_message_rsp_t;
 
 /*Msg struct :client to server*/
 /*commit cmd*/
@@ -206,19 +184,18 @@ typedef struct sc_bt_query_rsp_s{
 }sc_bt_query_rsp_t;
 
 /*Node of message*/
-typedef struct message_node_s{
+typedef struct socket_message_node_s{
     char one_msg[BUFLEN];
     int valid;
     struct list_head list;
-}message_node_t;
+}socket_message_node_t;
 
 
 /****Funcs****/
-char *make_send_msg(char *itype,void *data, unsigned int data_len);
-int send_message(char *itype,void *data, unsigned int data_len);
-int send_response(char *buf,unsigned int,char *status,char *error);
+char *make_socket_send_message(char *itype,void *data, unsigned int data_len);
+int socket_send_message(char *itype,void *data, unsigned int data_len);
+int socket_send_response(char *buf,unsigned int,char *status,char *error);
 
-int serial_init(void );
 char *system_timestamp();
 
 struct handler_driver;
@@ -227,16 +204,16 @@ typedef int (*cs_commit_f)(void *,unsigned int);
 typedef int (*cs_pairok_f)(void *,unsigned int);
 typedef int (*cs_hb_f)(void *,unsigned int);
 
-typedef int (*sc_setdev_f)(msg_header_t*,unsigned int);
-typedef int (*sc_rmdev_f)(msg_header_t*,unsigned int);
-typedef int (*sc_bt_restore_f)(msg_header_t*,unsigned int);
-typedef int (*sc_bt_backup_f)(msg_header_t*,unsigned int);
-typedef int (*sc_bt_query_f)(msg_header_t*,unsigned int);
+typedef int (*sc_setdev_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_rmdev_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_bt_restore_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_bt_backup_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_bt_query_f)(socket_message_header_t*,unsigned int);
 
-typedef int (*sc_rsp_scan_f)(msg_header_t*,unsigned int);
-typedef int (*sc_rsp_commit_f)(msg_header_t*,unsigned int);
-typedef int (*sc_rsp_hb_f)(msg_header_t*,unsigned int);
-typedef int (*sc_rsp_pair_f)(msg_header_t*,unsigned int);
+typedef int (*sc_rsp_scan_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_rsp_commit_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_rsp_hb_f)(socket_message_header_t*,unsigned int);
+typedef int (*sc_rsp_pair_f)(socket_message_header_t*,unsigned int);
 
 
 struct handler_funcs {
