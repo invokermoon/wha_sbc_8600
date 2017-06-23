@@ -105,7 +105,6 @@ unsigned char *serial_send_message(char floorid,\
     int i=0,write_size;
 
     pthread_mutex_lock(&mutex);
-    //serial_gpio_config(true);
 
     unsigned int buf_len=data_len+INDEX_SEND_HEADER_SIZE+MSG_TAIL_SIZE;
 
@@ -149,7 +148,9 @@ unsigned char *serial_send_message(char floorid,\
 
     print_send_list();
 
+    //serial_gpio_config(1);
     write_size=write(sfd,buf,buf_len);
+    //serial_gpio_config(0);
 
     if(write_size<1){
 	serial_print("write msg error,write_size=%d\n",write_size);
@@ -159,7 +160,6 @@ unsigned char *serial_send_message(char floorid,\
     serial_print("First write success,write_size=%d\n",write_size);
 
 __exit:
-    //serial_gpio_config(false);
     pthread_mutex_unlock(&mutex);
     return buf;
 }
@@ -249,7 +249,7 @@ int serial_gpio_config(char flag)
     int fd,bytes_write;
 
     /*TODO*/
-    fd = open("/sys/XXXXX", O_RDWR);
+    fd = open("/sys/class/leds/user_led/brightness", O_RDWR);
     if(fd==-1){
 	serial_print("Open sys error\n");
 	return -1;
@@ -284,7 +284,9 @@ void *serial_resend(void *addr)
 	serial_print("rewbuf_len=%d,rewrite=%d\n",msg->buf_len,msg->rewrite);
 
 	if(msg->rewrite < 4){
-	    int write_size=write(sfd,msg->buf,msg->buf_len);
+	    //serial_gpio_config(1);
+	    int write_size=1;//write(sfd,msg->buf,msg->buf_len);
+	    //serial_gpio_config(0);
 	    if(write_size>INDEX_SEND_HEADER_SIZE){
 		serial_print("resend success,rewrite=%d\n",msg->rewrite);
 	    }else
@@ -302,8 +304,12 @@ void serial_process_recv_msg(serial_recv_message_t *rsp_msg)
     /*TODO*/
     if (rsp_msg->cmd_id == 3){
 	char room[6];
-	sprintf(room,"%02d%02d|",rsp_msg->floorid,rsp_msg->roomid);
+	sprintf(room,"8%d%02d|",rsp_msg->floorid % 10,rsp_msg->roomid);
 	handler->funcs.cs_pair(room,strlen(room));
+    } else if (rsp_msg->cmd_id == 8){
+	char room[6];
+	sprintf(room,"8%d%02d|",rsp_msg->floorid % 10,rsp_msg->roomid);
+	handler->funcs.cs_scan(room,strlen(room));
     }
 
     return ;

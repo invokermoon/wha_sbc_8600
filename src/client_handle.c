@@ -39,6 +39,7 @@ int cs_scan(void *buf,unsigned int length)
 	.bleMac=BLE_MAC_ADDRESS__,
 	.phoneMac=PHONE_MAC_ADDRESS__,
     };
+    if (buf != NULL) memcpy(data_buf.roomid,buf,length);
     memcpy(data_buf.timestamp,system_timestamp(),sizeof(data_buf.timestamp));
     /*we need ignore the "\0" of timestamp */
     socket_send_message(ITYPE_CS_SCAN,&data_buf,sizeof(cs_scan_msg_t)-1);
@@ -63,6 +64,7 @@ int cs_pair(void *buf,unsigned int length)
 	.bleMac=BLE_MAC_ADDRESS__,
 	.phoneMac=PHONE_MAC_ADDRESS__,
     };
+    if (buf != NULL) memcpy(data_buf.roomid,buf,length);
     memcpy(data_buf.timestamp,system_timestamp(),sizeof(data_buf.timestamp));
     socket_send_message(ITYPE_CS_PAIR_OK,&data_buf,sizeof(cs_pair_msg_t)-1);
 
@@ -75,7 +77,7 @@ int sc_setdev(socket_message_header_t *buf,unsigned int len)
     socket_print("roomid:%s\n",data->roomid);
     socket_print("status:%s\n",data->status);
     if(strncmp(data->status, DEVICE_STATUS_READYPAIR,strlen(DEVICE_STATUS_READYPAIR))==0){
-        char floorid=atoi(data->roomid)/100;
+        char floorid=(atoi(data->roomid)/100)%10;
         char roomid=atoi(data->roomid)%100;
         serial_send_message(floorid,roomid,2, NULL, 0);
     }
@@ -115,12 +117,12 @@ int sc_bt_backup(socket_message_header_t *buf,unsigned int len)
 	.backups=DEVICE_BACKUPS,
     };
 
-    char *rsp_buf=malloc(len+sizeof(rsp_data)+1);
-    memset(rsp_buf,0,len+sizeof(rsp_data)+1);
+    char *rsp_buf=malloc(len+sizeof(rsp_data));
+    memset(rsp_buf,0,len+sizeof(rsp_data));
     memcpy(rsp_buf,buf,len);
     memcpy(rsp_buf+len-1,&rsp_data,sizeof(rsp_data));
 
-    socket_send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
+    socket_send_response(rsp_buf,len+sizeof(rsp_data),STATUS_OK,"0");
     free(rsp_buf);
 
     return 0;
@@ -135,11 +137,11 @@ int sc_bt_query(socket_message_header_t *buf,unsigned int len)
 	.status=DEVICE_STATUS_READYPAIR,
     };
 
-    char *rsp_buf=malloc(len+sizeof(rsp_data)+1);
-    memset(rsp_buf,0,len+sizeof(rsp_data)+1);
+    char *rsp_buf=malloc(len+sizeof(rsp_data));
+    memset(rsp_buf,0,len+sizeof(rsp_data));
     memcpy(rsp_buf,buf,len);
     memcpy(rsp_buf+len-1,&rsp_data,sizeof(rsp_data));
-    socket_send_response(rsp_buf,len+sizeof(rsp_data)+1,STATUS_OK,"0");
+    socket_send_response(rsp_buf,len+sizeof(rsp_data),STATUS_OK,"0");
     free(rsp_buf);
 
     return 0;

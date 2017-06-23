@@ -128,16 +128,35 @@ char *make_socket_socket_send_message(char *itype,void *data, unsigned int data_
     /*add the tail mask*/
     memcpy(header->data+data_len,MSG_TAIL_STRING,strlen(MSG_TAIL_STRING));
 
-    socket_print("Send msg:\n%s\nlen=%d\n",(char *)header,len);
+    socket_print(PURPLE"Send msg:\n%s"NONE"  len=%d\n",(char *)header,len);
     pthread_mutex_unlock(&mutex);
     return (char*)header;
+}
+
+static unsigned int correcting_buffer_length(char *buff)
+{
+    char slen[8];
+    socket_message_header_t *buf=(socket_message_header_t *)buff;
+    if(!buff){
+	sbc_color_print(RED,"ERROR:buffer is null\n");
+	exit(-1);
+    }
+    unsigned int len=atoi(buf->length);
+    unsigned int len_real=strlen(buff);
+    if(len!=len_real){
+	sbc_print(DEBUG_INFO,"Correcting the length,len=%d,len_real=%d\n",len,len_real);
+	len = len_real;
+	sprintf(slen,"%04d|",len);
+	memcpy(buf->length,slen,4);
+    }
+    return len;
 }
 
 int socket_send_message(char *itype,void *data, unsigned int data_len)
 {
     char *msg=(char *)make_socket_socket_send_message(itype,data,data_len);
 
-    unsigned int wsize=strlen(msg);
+    unsigned int wsize=correcting_buffer_length(msg);
     socklen_t len = send(sockfd,msg,wsize,0);
 
     free(msg);
@@ -157,8 +176,8 @@ static void add_strings_splitsymbol(char *buf,unsigned int buf_len)
     int i=0;
     if(buf){
 	/*ignore the last char*/
-	for(i=0;i<(buf_len-3);i++){
-	    if( buf[i]== 0 ) buf[i]='|';
+	for(i=0;i<(buf_len-strlen(MSG_TAIL_STRING));i++){
+	    if( buf[i] == 0 ) buf[i]='|';
 	}
     }
 }
@@ -183,49 +202,43 @@ int socket_send_response(char *msg_buf,unsigned int buf_len, char *status,char *
     unsigned int error_len=strlen(error);
     unsigned int len=0;
 
-    char slen[8];
     if(error){
 	error_len=strlen(error);
+    }
+
+    if(!buf){
+	socket_print("buf is NULL,error\n");
+	return 0;
     }
 
     /*ensure that the symbol is vaild*/
     memcpy(buf->head,MSG_HEADER_STRING,sizeof(buf->head));
     add_strings_splitsymbol((char*)buf,buf_len);
 
+    sbc_print(DEBUG_DBG,"Process:\n%s   len=%zd\n",(char*)buf,strlen((char*)buf));
+
+    len=buf_len+strlen("|")+sizeof(socket_message_rsp_t)+error_len;
+
     char *end_p=strstr((char*)buf,">>");
     if( end_p ){
 	/*If this buf have the ">>" */
-	len=buf_len+strlen("|")+sizeof(socket_message_rsp_t)+error_len;
 	/*remove the end symbol to connect others strings*/
 	memset(end_p,0,2);
-    }else
-	/*If this buf doesn't have the >>*/
-	len=buf_len+strlen("|")+sizeof(socket_message_rsp_t)+error_len+strlen(MSG_TAIL_STRING);
-
-    sprintf(slen,"%04d|",len);
+    }
 
     char buff[len+2];
     memset(buff,0,len+2);
-    if(buf==NULL){
-	socket_print("buf is NULL,error\n");
-	return 0;
-    }
 
     memcpy(buff,buf,buf_len);
-    /*change the length*/
-    char *len_p=strstr(buff,"|");
-    if(len_p){
-	len_p=strstr(len_p+1,"|");
-	if(len_p)
-	    memcpy(len_p+1,slen,4);
-    }
 
     strcat(buff,"|");
     strcat(buff,status);
     strcat(buff,"|");
     strcat(buff,error);
     strcat(buff,MSG_TAIL_STRING);
-    socket_print("Rsp msg: \n%s   len=%d\n",buff,len);
+
+    len = correcting_buffer_length(buff);
+    socket_print(PURPLE"Rsp msg: \n%s"NONE" len=%d\n",buff,len);
     send(sockfd,buff,len,0);
     return 0;
 }
@@ -247,7 +260,7 @@ int socket_parse_one_message(char *msg)
 	return -1;
     }
     size_t len=strlen(msg);
-    socket_print("One Msg is:\n%s len=%zd\n",msg,len);
+    socket_print(BROWN"One Msg is:\n%s"NONE" len=%zd\n",msg,len);
     if(len<sizeof(socket_message_header_t)){
 	socket_print("message size is error\n");
 	sleep(1);
@@ -560,10 +573,10 @@ _retry:
 	else if(strncmp("pairok",buf,6)==0){
 	    handler->funcs.cs_pair(NULL,0);
 	}
-	else if(strncmp("serialcheck",buf,10)==0){
+	else if(strncmp("serialcheck",buf,11)==0){
 	    serial_send_message(3,24,0, NULL, 0);
 	}
-	else if(strncmp("serialpair",buf,4)==0){
+	else if(strncmp("serialpair",buf,10)==0){
 	    serial_send_message(3,24,2, NULL, 0);
 	}else{
 	    socket_print("Invalid cmd!\n");

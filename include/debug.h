@@ -68,9 +68,9 @@ static __inline__ char *get_debug_level_name(enum debug_level_e eee)
 
 
 #define sbc_print(flag,fmt,...) do { \
-   if( flag < DEBUG_LEVEL ) printf(YELLOW"[%s][%s]:"NONE fmt,get_debug_level_name(flag),__func__,##__VA_ARGS__) ;} while(0)
-#define socket_print(fmt,...) do {  printf(GREEN"[Socket][%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
-#define serial_print(fmt,...) do {  printf(BLUE"[Serial][%s]:"NONE fmt,__func__,##__VA_ARGS__) ;} while(0)
-#define sbc_color_print(color,fmt,...) do {  printf(color"[%s]:"color fmt NONE,__func__,##__VA_ARGS__) ;} while(0)
+   if( flag < DEBUG_LEVEL ) {printf("%s %s"YELLOW"[%s][%s]:"NONE fmt,__DATE__,__TIME__,get_debug_level_name(flag),__func__,##__VA_ARGS__) ; fflush(stdout);}} while(0)
+#define socket_print(fmt,...) do {  printf("%s %s"GREEN"[Socket][%s]:"NONE fmt,__DATE__,__TIME__,__func__,##__VA_ARGS__) ; fflush(stdout);} while(0)
+#define serial_print(fmt,...) do {  printf("%s %s"BLUE"[Serial][%s]:"NONE fmt,__DATE__,__TIME__,__func__,##__VA_ARGS__) ; fflush(stdout);} while(0)
+#define sbc_color_print(color,fmt,...) do {  printf("%s %s"color"[%s]:"color fmt NONE,__DATE__,__TIME__,__func__,##__VA_ARGS__) ; fflush(stdout);} while(0)
 
 #endif
